@@ -1,12 +1,10 @@
 ---
 name: clean-code-python
 description: >
-  Apply Clean Code principles (Robert C. Martin) to Python code. Use this skill
-  whenever the user asks to review, refactor, clean up, or improve Python code quality.
-  Also trigger when the user mentions: bad code, messy code, hard to read code, code smells,
-  naming conventions, function design, class design, test quality, or any request to "make
-  my code cleaner / more readable / more professional". Even for partial snippets or
-  quick reviews, consult this skill first.
+  Clean Code principles (Robert C. Martin) applied to Python: naming, function and
+  class design, comments, formatting and linting with ruff, error handling, code
+  smells, and the limits of these rules. Use when reviewing or refactoring Python
+  code for readability and design quality.
 ---
 
 # Clean Code — Python
@@ -157,34 +155,70 @@ def celsius_to_fahrenheit(celsius: float) -> float:
 
 ## 5. Formatting
 
-Consistent formatting signals professionalism. In Python, delegate all mechanical formatting to tools rather than doing it manually:
+Consistent formatting signals professionalism. Delegate everything mechanical to
+**ruff**, a single tool for both:
 
-- **Black** — opinionated auto-formatter. Rewrites your file to a single canonical style (spacing, trailing commas, line wrapping). No arguments, no config to bikeshed.
-- **isort** — sorts and groups `import` statements automatically (stdlib → third-party → local).
+- **`ruff format`** — Black-compatible formatter: one canonical style, nothing to debate.
+- **`ruff check`** — linter; also sorts imports (rule set `I`, replaces isort) and
+  turns several Clean Code rules into automatic checks.
 
-In practice you don't run them manually — you wire them as **pre-commit hooks**: they run automatically on every `git commit`, before the commit lands. Bad formatting never reaches the repo.
+```toml
+# pyproject.toml
+[tool.ruff]
+line-length = 88
+target-version = "py311"
+
+[tool.ruff.lint]
+select = [
+    "E", "W", "F",  # pycodestyle, pyflakes
+    "I",            # import sorting
+    "N",            # PEP 8 naming
+    "UP",           # modern syntax
+    "B",            # likely bugs
+    "SIM",          # simplifiable code
+    "C90",          # cyclomatic complexity
+    "PLR",          # too many args / branches / statements
+    "ARG",          # unused arguments
+    "ERA",          # commented-out code
+    "BLE",          # blind `except Exception`
+]
+
+[tool.ruff.lint.mccabe]
+max-complexity = 10
+```
+
+| Clean Code rule | Enforced by |
+|---|---|
+| No commented-out code (§4) | `ERA001` |
+| Small functions, few branches (§3) | `C901`, `PLR0912`, `PLR0915` |
+| Limit arguments (§3) | `PLR0913` (backstop — the review rule stays stricter) |
+| Catch narrowly (§7) | `E722` bare `except`, `BLE001` |
+| PEP 8 naming (§2) | `N` |
+| No magic numbers | `PLR2004` |
+
+Run it on every commit with **pre-commit**:
 
 ```yaml
 # .pre-commit-config.yaml
 repos:
-  - repo: https://github.com/psf/black
-    rev: 24.3.0
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.17.6               # `pre-commit autoupdate` to refresh
     hooks:
-      - id: black
-
-  - repo: https://github.com/PyCQA/isort
-    rev: 5.13.2
-    hooks:
-      - id: isort
-        args: ["--profile", "black"]  # isort compatible with Black's style
+      - id: ruff-check
+        args: ["--fix"]
+      - id: ruff-format
 ```
 
 ```bash
-uv add --dev pre-commit
-uv run pre-commit install   # registers the hooks in .git/hooks/
+uv add --dev ruff pre-commit
+uv run pre-commit install        # registers the hooks in .git/hooks/
+uv run ruff check --fix . && uv run ruff format .   # manual run
 ```
 
-After `pre-commit install`: on every `git commit`, Black and isort run automatically. If they modify files, the commit is blocked and you recommit the fixed files. Formatting never reaches the repo broken.
+`ruff-check` runs before `ruff-format`: fixes can change layout. If a hook
+modifies files, the commit is blocked — review and recommit.
+
+Tools handle layout; the rules below are what they can't decide.
 
 ### Vertical formatting
 - **Newspaper metaphor**: high-level concepts at the top, details below.
@@ -192,7 +226,7 @@ After `pre-commit install`: on every `git commit`, Black and isort run automatic
 - Empty lines between logical sections (like paragraphs).
 
 ### Horizontal formatting
-- Max line length: **88 chars** (Black default) — never exceed 120.
+- Max line length: **88 chars** (ruff/Black default) — never exceed 120.
 - No horizontal alignment (wastes time maintaining it).
 - Use whitespace around operators.
 
@@ -256,7 +290,7 @@ class Account:
 
     def withdraw(self, amount: Decimal) -> None:
         if amount > self.balance:
-            raise InsufficientFunds(amount, self.balance)
+            raise InsufficientFundsError(amount, self.balance)
         self.balance -= amount
 
 # Good: an object hides its state behind behaviour
@@ -270,7 +304,7 @@ class Account:
 
     def withdraw(self, amount: Decimal) -> None:
         if amount > self._balance:
-            raise InsufficientFunds(amount, self._balance)
+            raise InsufficientFundsError(amount, self._balance)
         self._balance -= amount
 ```
 
@@ -439,7 +473,7 @@ When reviewing or refactoring Python code, go through these in order:
 - [ ] **Functions**: Each function does one thing; no side effects; no flag arguments
 - [ ] **Arguments**: ≤ 3 args per function; use dataclasses for more
 - [ ] **Comments**: No redundant/misleading comments; existing docstrings preserved
-- [ ] **Formatting**: Black + isort applied; logical grouping with blank lines
+- [ ] **Formatting**: `ruff format` and `ruff check` clean; logical grouping with blank lines
 - [ ] **Error handling**: Exceptions with context and cause; no bare `except:`; `None` only for normal absence
 - [ ] **Tests**: FIRST properties; one concept per test; Given-When-Then structure
 - [ ] **Classes**: SRP applied; high cohesion; no hybrid data/behavior leaks

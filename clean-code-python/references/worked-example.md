@@ -75,7 +75,9 @@ class Invoice:
     total: Decimal
 
 
-def compute_invoice(customer: str, country: str, lines: Iterable[InvoiceLine]) -> Invoice:
+def compute_invoice(
+    customer: str, country: str, lines: Iterable[InvoiceLine]
+) -> Invoice:
     total = apply_bulk_discount(apply_vat(subtotal(lines), country))
     return Invoice(customer=customer, total=total.quantize(CENT))
 

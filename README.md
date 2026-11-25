@@ -17,6 +17,7 @@ un agent pour cadrer la conception, l'écriture et la relecture de code.
 - **Gestion de paquets** : `uv`
 - **Typage** : `mypy` en mode strict, contrats via `typing.Protocol`
 - **Tests** : `pytest`
+- **Formatage et lint** : `ruff` (`ruff format` + `ruff check`), via pre-commit
 - **Structure** : un dossier par skill, `{nom-du-skill}/SKILL.md` (+ éventuel
   `references/`) ; le nom du dossier est identique au champ `name` du frontmatter
 - **Registre** : anglais, dense et opérationnel — du code de référence et des
