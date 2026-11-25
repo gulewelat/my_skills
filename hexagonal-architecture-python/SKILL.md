@@ -314,44 +314,35 @@ class SqlUserRepository:
 Thin translators: parse transport input, call **one** use case, translate the result and the domain errors back into the transport's vocabulary.
 
 ```python
-# adapters/inbound/api.py
-from typing import Annotated
+# adapters/inbound/cli.py
+import argparse
+import sys
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Request, status
-from pydantic import BaseModel
-
 from <package>.application.use_cases import ActivateUser
-from <package>.bootstrap import App
-
-router = APIRouter()
+from <package>.domain.exceptions import DomainError
 
 
-class UserResponse(BaseModel):
-    id: UUID
-    email: str
-    is_active: bool
-
-
-def get_activate_user(request: Request) -> ActivateUser:
-    container: App = request.app.state.container   # see Dependency injection
-    return container.activate_user
-
-
-ActivateUserDep = Annotated[ActivateUser, Depends(get_activate_user)]
-
-
-@router.post("/users/{user_id}/activation", status_code=status.HTTP_201_CREATED)
-def activate_user(user_id: UUID, activate: ActivateUserDep) -> UserResponse:
-    user = activate.execute(user_id)
-    return UserResponse(id=user.id, email=user.email.value, is_active=user.is_active)
+def main(activate: ActivateUser, argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(prog="activate-user")
+    parser.add_argument("user_id", type=UUID)
+    args = parser.parse_args(argv)
+    try:
+        user = activate.execute(args.user_id)
+    except DomainError as error:          # this adapter's single translation point
+        print(error, file=sys.stderr)
+        return 1
+    print(f"{user.email.value} is now active")
+    return 0
 ```
 
-No `try/except` in the route: domain errors are translated **in one place** by
-exception handlers (`UserNotFoundError` → 404, `AccountAlreadyActiveError` → 409).
-HTTP conventions — naming, status codes, error format — follow **rest-api-python**.
+The adapter receives its use case, parses the transport's input, calls the use
+case once, and translates the result and domain errors into the transport's
+vocabulary (output and exit code here). Transport models and domain objects stay
+distinct on purpose: the contract and the domain model evolve independently.
 
-`UserResponse` (the transport schema) and `User` (the domain entity) are different objects on purpose — the API contract and the domain model evolve independently; the route maps one to the other.
+**HTTP adapters** (FastAPI routers, schemas, dependency wiring, exception
+handlers): **rest-api-python** — routers §7, error mapping §4.
 
 ### Rules
 
@@ -399,30 +390,15 @@ Annotating with the port matters: without it, `mypy` infers the first branch's c
 
 This is also where `mypy` verifies the whole architecture: passing `users` to `ActivateUser(users=...)` is the injection site where each adapter's structural conformance to its port is checked.
 
-The FastAPI side — `create_app` stores the container where route dependencies read it:
+Each driving adapter takes its use cases from `bootstrap()` at its entry point:
 
 ```python
-# main.py
-from fastapi import FastAPI
-
-from <package>.adapters.inbound import api
-from <package>.adapters.inbound.errors import install_error_handlers
-from <package>.bootstrap import App, bootstrap
-from <package>.config import Settings
-
-
-def create_app(container: App) -> FastAPI:
-    app = FastAPI()
-    app.state.container = container      # read by get_activate_user & co.
-    install_error_handlers(app)          # domain errors → HTTP, one mapping
-    app.include_router(api.router)
-    return app
-
-
-app = create_app(bootstrap(Settings()))
+# __main__.py
+sys.exit(cli.main(bootstrap(Settings()).activate_user))
 ```
 
-Routes never import `main` (circular import). Tests call `create_app` with fakes.
+For FastAPI, a `create_app(container)` factory stores the container on the app
+and routes read it through dependencies — see **rest-api-python** §7.
 
 ### Rules
 
