@@ -1,3 +1,8 @@
+---
+name: mypy-python
+description: Static type checking of Python code with mypy in strict mode. Covers basic and advanced annotations (generics, Protocol, TypedDict, overloads), mypy configuration in pyproject.toml, incremental adoption on untyped codebases, FastAPI typing, common patterns and anti-patterns. Use when adding type hints, configuring mypy, or fixing mypy errors.
+---
+
 # mypy - Static Type Checking for Python
 
 ## Overview

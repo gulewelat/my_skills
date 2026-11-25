@@ -1,3 +1,8 @@
+---
+name: pytest-python
+description: Write and organize Python tests with pytest. Covers test structure, suite organization, markers and parametrization, command-line options, fixtures and scopes, mocking, configuration in pyproject.toml, best practices and anti-patterns. Use when writing, structuring, or debugging a pytest test suite.
+---
+
 # pytest - Testing Framework for Python
 
 ## Overview
