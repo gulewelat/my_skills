@@ -1,6 +1,6 @@
 ---
 name: hexagonal-architecture-python
-description: Design, structure, and review Python applications using Hexagonal Architecture (Ports & Adapters). Covers project layout, the domain layer (entities, value objects, domain services), ports via typing.Protocol, use cases, driving and driven adapters, dependency injection at the composition root, and the testing strategy this architecture enables. Use when building or refactoring a Python app with a domain layer isolated from infrastructure, or when scaffolding a project with domain/application/adapters boundaries.
+description: Design, structure, and review Python applications using Hexagonal Architecture (Ports & Adapters). Covers project layout, the domain layer (entities, value objects, domain services), ports via typing.Protocol, use cases, driving and driven adapters, dependency injection at the composition root, and the testing strategy this architecture enables. Use when building or refactoring a Python app with a domain layer isolated from infrastructure, or when scaffolding a project with domain/application/adapters layers.
 ---
 
 # Hexagonal Architecture in Python
@@ -12,6 +12,28 @@ Hexagonal Architecture — also called **Ports & Adapters**, near-synonymous wit
 > For **event-driven** patterns on top of this foundation — domain events, message bus, commands vs events, CQRS — see the companion skill `domain_events_python_SKILL.md`.
 
 Conventions: Python 3.14+, `uv` as package manager, `mypy` strict, `pytest`, ports as `typing.Protocol` (structural typing).
+
+**Vocabulary** — shared with Matt Pocock's `codebase-design` skill:
+
+| Term | Meaning here |
+|---|---|
+| **Module** | Anything with an interface and an implementation — a function, a class, a package |
+| **Seam** | Where a module's interface lives; behaviour changes there without editing the caller |
+| **Port** | The interface at an application seam, written as a `Protocol` |
+| **Adapter** | A concrete thing that satisfies a port: SQL repository, FastAPI router, in-memory fake |
+| **Depth** | Behaviour per unit of interface — keep ports small and use cases deep |
+
+A port is a **real** seam: every port has at least two adapters, the production
+one and the in-memory one used by tests — so the indirection pays for itself
+from day one. Two conditions keep it true:
+
+- The in-memory adapter actually exists and the tests use it. Without it, the
+  port has one adapter: a hypothetical seam, i.e. speculative abstraction.
+- Ports sit only where something varies — the edges with infrastructure
+  (database, email, clock, external APIs). Pure domain code has nothing to
+  swap and gets no port.
+
+"Boundary" is avoided (it collides with DDD's bounded context); say seam or interface.
 
 ---
 
@@ -159,7 +181,7 @@ class UserNotFoundError(DomainError):
         self.user_id = user_id
 ```
 
-A shared `DomainError` base lets adapters catch the whole family in one place at the boundary.
+A shared `DomainError` base lets each driving adapter catch the whole family in one place, at its seam.
 
 ---
 
@@ -238,10 +260,10 @@ Ports arrive by **constructor injection**, typed as the `Protocol`s — `mypy` a
 ### Rules
 
 - Imports: `domain/` and `ports/` only. No adapters, no framework, no infrastructure.
-- Inputs are primitives or value objects; outputs are domain objects. Transport models (request/response schemas, ORM rows) never cross this boundary — the driving adapter translates on the way in and on the way out.
+- Inputs are primitives or value objects; outputs are domain objects. Transport models (request/response schemas, ORM rows) never cross this seam — the driving adapter translates on the way in and on the way out.
 - Absence and failure become explicit domain errors (`UserNotFoundError`), raised for adapters to translate — a use case never returns framework responses or status codes.
 - One use case = one action, named as a verb phrase. If it grows branches to serve different callers, split it.
-- The use case is the transaction boundary. If transactional grouping is needed, model it as an outbound port (a unit of work) — never import a DB session here.
+- The use case delimits the transaction. If transactional grouping is needed, model it as an outbound port (a unit of work) — never import a DB session here.
 
 ---
 
@@ -405,7 +427,7 @@ Routes never import `main` (circular import). Tests call `create_app` with fakes
 ### Rules
 
 - `bootstrap.py` is the only place that imports concrete adapters, and the only place environment/config branching (`if settings.storage == …`) appears.
-- Constructor injection only. No service locator: a component never reaches out to a global registry to *fetch* its dependencies — dependencies are handed to it.
+- Constructor injection only. No service locator: a module never reaches out to a global registry to *fetch* its dependencies — dependencies are handed to it.
 - Tests reuse the same mechanism: build use cases directly with fakes (or a `bootstrap`-for-tests). Swapping an adapter is a one-line change here and zero lines anywhere else.
 
 ---
@@ -495,7 +517,7 @@ def test_round_trip(session: Session) -> None:  # real DB via fixture
 - **Leaky port** — a port exposing its technology: returning ORM rows, taking a `Session`, infra vocabulary in signatures.
 - **Use case bypass** — a driving adapter reaching a repository directly.
 - **God port** — one `Repository` with 15 methods serving every caller.
-- **Service locator** — components fetching dependencies from a global registry instead of receiving them.
+- **Service locator** — modules fetching dependencies from a global registry instead of receiving them.
 - **Patch-based tests** — `mock.patch` in unit tests; the DI was bypassed.
 - **Transport leak** — request/response schemas or ORM models crossing into `application/` or `domain/`.
 
