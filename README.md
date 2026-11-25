@@ -8,7 +8,7 @@ un agent pour cadrer la conception, l'écriture et la relecture de code.
 | Skill | Objet |
 |---|---|
 | [`hexagonal-architecture-python`](hexagonal-architecture-python/SKILL.md) | Architecture hexagonale (Ports & Adapters) : structure de projet, domaine, ports, use cases, adapters, injection, tests |
-| [`clean-code-python`](clean-code-python/SKILL.md) | Principes Clean Code appliqués à Python : nommage, fonctions, classes, qualité des tests |
+| [`clean-code-python`](clean-code-python/SKILL.md) | Principes Clean Code appliqués à Python : nommage, fonctions, classes, erreurs, limites d'application ; référence : refactoring commenté pas à pas |
 | [`mypy-python`](mypy-python/SKILL.md) | Typage statique en mode strict : annotations, configuration, discipline des `type: ignore`, anti-patterns ; références : types avancés, adoption progressive, FastAPI |
 | [`pytest-python`](pytest-python/SKILL.md) | Écriture et organisation des tests : structure, markers, paramétrage, fixtures, doublures ; références : fixtures, mocking, CLI et config, anti-patterns |
 

@@ -15,6 +15,14 @@ This skill applies the principles from *Clean Code* (Robert C. Martin) to Python
 Its purpose: help Claude review, refactor, and explain code quality decisions with
 precision and educational value.
 
+Conventions: Python 3.11+, `mypy --strict` — every "Good" example below is fully typed.
+
+## Reference files
+
+| File | When |
+|---|---|
+| [references/worked-example.md](references/worked-example.md) | Refactoring request: the expected approach, from diagnosis to stopping point |
+
 ---
 
 ## 1. Core Philosophy
@@ -45,26 +53,34 @@ Clean code is **readable by humans first**. Every decision below serves that goa
 | Classes = nouns | `ProcessData` | `DataProcessor` |
 | Functions = verbs | `data()` | `fetch_data()` |
 | Booleans = predicates | `flag`, `check` | `is_valid`, `has_permission` |
+| One word per concept | `fetch_user`, `get_order`, `retrieve_invoice` | `get_user`, `get_order`, `get_invoice` |
 
 ### Python specifics
 ```python
 # Bad
-def calc(x, lst, f=False):
+def calc(x, lst):
     res = []
     for i in lst:
-        if i[0] == 4 or f:
+        if i[2] == 4:
             res.append(i)
     return res
 
 # Good
-FLAGGED_STATUS = 4
+FLAGGED: Final = 4
 
-def get_flagged_cells(game_board: list[list], include_all: bool = False) -> list[list]:
-    return [
-        cell for cell in game_board
-        if cell[STATUS_INDEX] == FLAGGED_STATUS or include_all
-    ]
+@dataclass(frozen=True)
+class Cell:
+    row: int
+    col: int
+    status: int
+
+def flagged_cells(board: Iterable[Cell]) -> list[Cell]:
+    return [cell for cell in board if cell.status == FLAGGED]
 ```
+
+Name length follows scope: `i` is fine in a 2-line comprehension, a module-level
+constant needs a full name. Follow PEP 8 casing: `snake_case` functions and
+variables, `PascalCase` classes, `UPPER_SNAKE` constants, `_leading` for private.
 
 ---
 
@@ -76,10 +92,11 @@ def get_flagged_cells(game_board: list[list], include_all: bool = False) -> list
 2. **Small** — aim for 5–15 lines; rarely exceed 20. No hard limit, but question anything longer.
 3. **One level of abstraction per function** — don't mix high-level logic with low-level details in the same function.
 4. **Limit arguments** — 0 is ideal, 1–2 is good, 3 is questionable, 4+ needs a dataclass/object.
-5. **No side effects** — a function named `check_password` must NOT also initialize a session.
-6. **Command-Query Separation** — a function either *does* something (command) or *returns* something (query), not both.
-7. **Prefer exceptions over error codes** — avoid nested `if result == ERROR_CODE` chains.
-8. **Don't Repeat Yourself (DRY)** — duplication is the root of all evil in software.
+5. **No flag arguments** — a `bool` parameter announces that the function does two things.
+6. **No side effects** — a function named `check_password` must NOT also initialize a session.
+7. **Command-Query Separation** — a function either *does* something (command) or *returns* something (query), not both.
+8. **Prefer exceptions over error codes** — avoid nested `if result == ERROR_CODE` chains.
+9. **Don't Repeat Yourself (DRY)** — duplication is the root of all evil in software.
 
 ### Python specifics
 ```python
@@ -96,14 +113,14 @@ def process(data, db, flag=False):
     return result
 
 # Good: separated concerns, no side effects, descriptive names
-def normalize_inputs(raw_items: list[str]) -> list[str]:
-    return [item.strip().lower() for item in raw_items if item]
+def normalize_names(raw_names: Iterable[str]) -> list[str]:
+    return [name.strip().lower() for name in raw_names if name.strip()]
 
-def find_records(names: list[str], db: Database) -> list[Record]:
-    return [record for name in names if (record := db.find_by_name(name))]
+def find_records(names: Iterable[str], repo: RecordRepository) -> list[Record]:
+    return [record for name in names if (record := repo.find_by_name(name))]
 
-def mark_last_run(db: Database) -> None:
-    db.update_last_run(datetime.utcnow())
+def mark_last_run(repo: RecordRepository, now: datetime) -> None:
+    repo.set_last_run(now)
 ```
 
 ---
@@ -126,7 +143,7 @@ def mark_last_run(db: Database) -> None:
 - **Docstrings**: don't add them if absent, but preserve and respect existing ones
 
 ```python
-# Bad
+# Bad: misleading comment, cryptic name
 def get_kc(x):
     # multiply by 1.8 and add 32
     return x * 1.8 + 32  # formula for kelvin
@@ -190,23 +207,23 @@ class User:
         if self.role not in ['admin','user','guest']: return False
         return True
 
-# Good
-class User:
-    VALID_ROLES = {'admin', 'user', 'guest'}
+# Good — reads top-down: public predicate first, details below
+VALID_ROLES: Final = frozenset({"admin", "user", "guest"})
 
-    def __init__(self, name: str, email: str, role: str) -> None:
-        self.name = name
-        self.email = email
-        self.role = role
+@dataclass(frozen=True)
+class User:
+    name: str
+    email: str
+    role: str
 
     def is_valid(self) -> bool:
         return self._has_valid_email() and self._has_valid_role()
 
     def _has_valid_email(self) -> bool:
-        return bool(self.email) and '@' in self.email
+        return "@" in self.email
 
     def _has_valid_role(self) -> bool:
-        return self.role in self.VALID_ROLES
+        return self.role in VALID_ROLES
 ```
 
 ---
@@ -231,31 +248,91 @@ output_dir = ctx.options.output.path.parent
 output_dir = ctx.get_output_directory()
 ```
 
+```python
+# Bad: hybrid — public mutable fields AND invariants that callers can break
+class Account:
+    def __init__(self) -> None:
+        self.balance = Decimal(0)        # anyone can write account.balance = -100
+
+    def withdraw(self, amount: Decimal) -> None:
+        if amount > self.balance:
+            raise InsufficientFunds(amount, self.balance)
+        self.balance -= amount
+
+# Good: an object hides its state behind behaviour
+class Account:
+    def __init__(self) -> None:
+        self._balance = Decimal(0)
+
+    @property
+    def balance(self) -> Decimal:
+        return self._balance
+
+    def withdraw(self, amount: Decimal) -> None:
+        if amount > self._balance:
+            raise InsufficientFunds(amount, self._balance)
+        self._balance -= amount
+```
+
+Pure data (DTOs, rows, events) → `@dataclass(frozen=True)` with no logic.
+Domain concepts with rules → objects with private state.
+
 ---
 
 ## 7. Error Handling
 
 - **Use exceptions, not return codes.** Return codes pollute the call chain.
-- **Don't return `None`** when you can raise an exception or return a `Null Object`.
-- **Don't pass `None`** as an argument (use defaults or Optional types explicitly).
+- **Raise when absence is an error**; return `T | None` only when absence is a
+  normal outcome (a lookup, a search) — mypy then forces callers to handle it.
+- **Don't pass `None`** as an argument to mean "default" — use a real default or a separate function.
 - **Provide context** in exceptions: what operation failed, and why.
+- **Chain the cause** with `raise ... from error`.
+- **Catch narrowly**: never bare `except:` or `except Exception: pass`.
 - **Exceptions are part of the interface** — document them.
 
 ```python
-# Bad
-def find_user(user_id):
-    result = db.query(user_id)
-    if not result:
-        return None  # caller must remember to check
-    return result
+# Bad: None signals an error the caller will forget to check
+def get_user(user_id: int) -> User | None:
+    return db.get(user_id)
 
-# Good
-def find_user(user_id: int) -> User:
-    user = db.query(user_id)
-    if not user:
-        raise UserNotFoundError(f"No user found with id={user_id}")
+user = get_user(42)
+send_invoice(user.email)    # AttributeError far from the cause
+
+# Good: absence is an error here — fail at the source, with context
+class UserNotFoundError(LookupError):
+    def __init__(self, user_id: int) -> None:
+        super().__init__(f"No user found with id={user_id}")
+        self.user_id = user_id
+
+def get_user(user_id: int) -> User:
+    user = db.get(user_id)
+    if user is None:
+        raise UserNotFoundError(user_id)
     return user
 ```
+
+```python
+# Bad: swallows everything, including typos and KeyboardInterrupt; cause lost
+try:
+    config = json.loads(path.read_text())
+except:
+    config = {}
+
+# Good: narrow, contextual, chained
+class ConfigError(Exception): ...
+
+def load_config(path: Path) -> Config:
+    try:
+        raw = json.loads(path.read_text())
+    except FileNotFoundError as error:
+        raise ConfigError(f"Config file missing: {path}") from error
+    except json.JSONDecodeError as error:
+        raise ConfigError(f"Invalid JSON in {path} at line {error.lineno}") from error
+    return Config.from_dict(raw)
+```
+
+Keep `try` blocks small: wrap only the line that can fail, so the handler
+can't catch an error from unrelated code.
 
 ---
 
@@ -265,7 +342,7 @@ Tests are **first-class code**. Dirty tests are worse than no tests: they rot an
 
 The core Clean Code principle that applies here: **one concept per test**. A test that asserts five unrelated things tells you nothing useful when it fails.
 
-> ⚠️ For everything else — fixtures, parametrize, mocking, pytest configuration — defer to the **pytest skill**, which covers this in full depth.
+> ⚠️ For everything else — fixtures, parametrize, mocking, pytest configuration — defer to the **pytest-python** skill, which covers this in full depth.
 
 The only thing to keep in mind from a clean code perspective when reviewing test code:
 
@@ -283,7 +360,7 @@ These are signals to fix the production code, not the test.
 A class should have **one reason to change**. If you need "and" to describe what it does, split it.
 
 ```python
-# Bad: Report knows how to format AND how to print
+# Bad: Report knows how to build, format AND deliver
 class Report:
     def generate(self): ...
     def print_to_pdf(self): ...
@@ -301,7 +378,8 @@ class ReportEmailer:
 ```
 
 ### Open/Closed Principle (OCP)
-Open for extension, closed for modification. Use inheritance or composition.
+Open for extension, closed for modification. Prefer composition and `Protocol`s over inheritance —
+once variation has actually appeared (see §11).
 
 ### Keep classes small
 - Measure by **responsibilities**, not lines of code.
@@ -316,7 +394,7 @@ Open for extension, closed for modification. Use inheritance or composition.
 |-------|---------|-----|
 | Long Method | Function > 20 lines | Extract sub-functions |
 | Long Parameter List | 4+ args | Use dataclass or config object |
-| Duplicate Code | Same logic in 2+ places | Extract to shared function/mixin |
+| Duplicate Code | Same logic in 2+ places | Extract to shared function |
 | Divergent Change | One class changes for multiple reasons | Apply SRP, split class |
 | Feature Envy | Method uses another class's data heavily | Move method to that class |
 | Data Clumps | Same 3 vars always together | Create a dataclass |
@@ -328,31 +406,57 @@ Open for extension, closed for modification. Use inheritance or composition.
 
 ---
 
-## 11. Review Checklist
+## 11. When Not to Apply
+
+Clean Code rules are heuristics. Applied mechanically they produce
+over-engineered code — which is not clean either.
+
+- **No abstraction for a single case.** No `Protocol`, registry, base class or
+  factory until a second real variant exists.
+- **A short, stable `if/elif` stays an `if`.** Two or three branches that rarely
+  change don't need polymorphism or dict dispatch.
+- **Rule of three for duplication.** Two similar blocks may diverge; extract on
+  the third occurrence, or when they must change together.
+- **Group arguments only if they form a concept.** Four unrelated parameters
+  don't become a dataclass just to reach "≤ 3 args".
+- **Don't split a cohesive function to hit a line count.** A 25-line function
+  at a single level of abstraction beats five 5-line fragments read in sequence.
+- **Stay in scope.** In a review or a targeted refactor, fix what was asked;
+  list other findings instead of rewriting neighbouring code.
+- **Respect the codebase.** Follow existing conventions and patterns unless
+  they are the problem being fixed.
+
+When a rule and readability disagree, readability wins — say which rule you
+are deliberately not applying and why.
+
+---
+
+## 12. Review Checklist
 
 When reviewing or refactoring Python code, go through these in order:
 
 - [ ] **Names**: Every name reveals intent without a comment
-- [ ] **Functions**: Each function does one thing; no side effects
+- [ ] **Functions**: Each function does one thing; no side effects; no flag arguments
 - [ ] **Arguments**: ≤ 3 args per function; use dataclasses for more
 - [ ] **Comments**: No redundant/misleading comments; existing docstrings preserved
 - [ ] **Formatting**: Black + isort applied; logical grouping with blank lines
-- [ ] **Error handling**: Exceptions with context; no bare `except:` or silent `None` returns
-- [ ] **Tests**: FIRST properties; one concept per test; AAA structure
+- [ ] **Error handling**: Exceptions with context and cause; no bare `except:`; `None` only for normal absence
+- [ ] **Tests**: FIRST properties; one concept per test; Given-When-Then structure
 - [ ] **Classes**: SRP applied; high cohesion; no hybrid data/behavior leaks
 - [ ] **DRY**: No duplicated logic anywhere
+- [ ] **Proportion**: No abstraction or indirection added without a present need (§11)
 - [ ] **Boy Scout Rule**: Is this code measurably cleaner than before?
 
 ---
 
-## 12. How to Use This Skill
+## 13. How to Use This Skill
 
-**For code review requests**: run through the checklist in §11, report findings by category, and suggest concrete rewrites.
+**For code review requests**: run through the checklist in §12, report findings by category, and suggest concrete rewrites.
 
-**For refactoring requests**: identify the top 2–3 smells (§10), explain why each hurts, then provide a rewritten version with before/after comparison.
+**For refactoring requests**: identify the top 2–3 smells (§10), explain why each hurts, then provide a rewritten version with before/after comparison. Follow the step-by-step format of [references/worked-example.md](references/worked-example.md).
 
-**For "write clean code" requests**: apply all applicable rules from §2–9 from the start, and call out design decisions explicitly.
+**For "write clean code" requests**: apply the rules from §2–9 within the limits of §11 from the start, and call out design decisions explicitly.
 
-**For test review**: use §8 to diagnose what the hard-to-test code reveals about production code quality. For pytest-specific guidance (fixtures, mocking, etc.), use the pytest skill.
+**For test review**: use §8 to diagnose what the hard-to-test code reveals about production code quality. For pytest-specific guidance (fixtures, mocking, etc.), use the pytest-python skill.
 
 Always explain the *why* behind each suggestion, grounded in the principles above.
