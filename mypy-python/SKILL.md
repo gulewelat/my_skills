@@ -1,13 +1,17 @@
 ---
 name: mypy-python
-description: Static type checking of Python code with mypy in strict mode. Covers annotations (builtins, unions, Literal, NewType, Protocol, Callable), mypy configuration in pyproject.toml, type-ignore discipline, error codes, and typing anti-patterns. Use when adding type hints, configuring mypy, reviewing typed code, or fixing mypy errors.
+description: Static type checking of Python 3.14+ code with mypy in strict mode. Covers annotations (builtins, unions, PEP 695 generics, Literal, NewType, Protocol, TypeIs), mypy configuration in pyproject.toml, type-ignore discipline, error codes, and typing anti-patterns. Use when adding type hints, configuring mypy, reviewing typed code, or fixing mypy errors.
 ---
 
 # mypy — Static Type Checking for Python
 
-Conventions: Python 3.11+, `uv`, `mypy --strict`, contracts via `typing.Protocol`.
-Modern syntax only: builtin generics (`list[int]`) and `X | None` — never
-`typing.List` / `Optional` / `Union`.
+Conventions: Python 3.14+, `uv`, `mypy --strict`, contracts via `typing.Protocol`.
+Modern syntax only:
+- builtin generics (`list[int]`) and `X | None` — never `typing.List` / `Optional` / `Union`;
+- PEP 695 type parameters (`def f[T]`, `class C[T]`, `type X = ...`) — never
+  `TypeVar(...)`, `Generic[T]`, `TypeAlias`;
+- forward references without quotes (`-> User`, annotations are lazy since 3.14) —
+  no `from __future__ import annotations`.
 
 ## Reference files
 
@@ -15,9 +19,10 @@ Load only when the task needs them:
 
 | File | When |
 |---|---|
-| [references/advanced-types.md](references/advanced-types.md) | Generics / TypeVar, Protocol vs ABC in depth, Callable, TypedDict, Final, Self, overloads |
+| [references/advanced-types.md](references/advanced-types.md) | Bounded/constrained generics, defaults, Protocol vs ABC, Callable, TypedDict, Final, Self, `@override`, `@deprecated`, overloads |
 | [references/incremental-adoption.md](references/incremental-adoption.md) | Introducing mypy on an untyped or partially typed codebase |
 | [references/fastapi.md](references/fastapi.md) | Typing FastAPI endpoints, dependencies, Pydantic models |
+| [references/anti-patterns.md](references/anti-patterns.md) | Reviewing typed code: 18 anti-patterns with before/after |
 
 ---
 
@@ -82,16 +87,17 @@ class User:
 ```
 
 Prefer `@dataclass(frozen=True)` for value objects: fields are typed once,
-`__init__` is generated and checked.
+`__init__` is generated and checked. A class can reference itself or a class
+defined later without quotes: `def parent(self) -> Node | None`.
 
 ### 1.4 — Literal, NewType, aliases
 
 ```python
-from typing import Literal, NewType, TypeAlias
+from typing import Literal, NewType
 
-Status = Literal["pending", "approved", "rejected"]
+type Status = Literal["pending", "approved", "rejected"]
+type Headers = dict[str, str]
 UserId = NewType("UserId", int)          # distinct type, zero runtime cost
-Headers: TypeAlias = dict[str, str]      # 3.12+: type Headers = dict[str, str]
 
 def update(user_id: UserId, status: Status) -> None: ...
 
@@ -104,10 +110,35 @@ update(UserId(1), "done")       # ❌ [arg-type] not a valid Literal
 |---|---|
 | Closed set of string/int values | `Literal` (or `enum.Enum` if behaviour attached) |
 | Same primitive, different meaning (ids) | `NewType` |
-| Name a long type expression | type alias |
+| Name a long type expression | `type` alias |
 | Structured data with invariants | `@dataclass(frozen=True)` |
 
-### 1.5 — Protocol (default for contracts)
+### 1.5 — Generics
+
+```python
+def first[T](items: Sequence[T]) -> T:
+    return items[0]
+
+class Stack[T]:
+    def __init__(self) -> None:
+        self._items: list[T] = []
+
+    def push(self, item: T) -> None:
+        self._items.append(item)
+
+    def pop(self) -> T:
+        return self._items.pop()
+
+first([1, 2, 3])                # int
+stack = Stack[str]()
+stack.push(42)                  # ❌ [arg-type]
+```
+
+Type parameters are declared in brackets and scoped to the function or class.
+Bounds, constraints, defaults, `ParamSpec`:
+[references/advanced-types.md](references/advanced-types.md).
+
+### 1.6 — Protocol (default for contracts)
 
 ```python
 from typing import Protocol
@@ -127,7 +158,7 @@ welcome(SmtpNotifier(), "a@b.c")         # ✅ checked structurally by mypy
 Use `ABC` only when you need a runtime error on missing methods or shared
 implementation. Details: [references/advanced-types.md](references/advanced-types.md).
 
-### 1.6 — Narrowing
+### 1.7 — Narrowing
 
 ```python
 def display(user: User | None) -> str:
@@ -142,7 +173,17 @@ def size(value: int | str) -> int:
 ```
 
 Narrow with `is None`, `isinstance`, early return, or `match`. Never with
-`cast` (see anti-patterns).
+`cast` (see anti-patterns). A reusable check becomes a `TypeIs` function:
+
+```python
+from typing import TypeIs
+
+def is_user(value: object) -> TypeIs[User]:
+    return isinstance(value, User)
+```
+
+The narrowed type must be a subtype of the parameter type: `list[object]` →
+`list[str]` is rejected (`list` is invariant); use `Sequence[object]`.
 
 ---
 
@@ -152,13 +193,19 @@ Narrow with `is None`, `isinstance`, early return, or `match`. Never with
 
 ```toml
 [tool.mypy]
-python_version = "3.11"
+python_version = "3.14"
 files = ["src", "tests"]
 strict = true
 
 # Not included in --strict, worth enabling
 warn_unreachable = true
-enable_error_code = ["ignore-without-code", "redundant-expr", "truthy-bool"]
+enable_error_code = [
+    "ignore-without-code",
+    "redundant-expr",
+    "truthy-bool",
+    "deprecated",          # calls to @deprecated APIs
+    "explicit-override",   # overriding methods must use @override
+]
 
 # Reporting
 pretty = true
@@ -201,185 +248,38 @@ reveal_type(result)   # mypy: Revealed type is "builtins.list[app.models.User]"
 ```
 
 Recognised by mypy without import; at runtime it needs
-`from typing import reveal_type` (3.11+). Remove before committing.
+`from typing import reveal_type`. Remove before committing.
 
 ---
 
 ## 3 — Anti-patterns
 
-### 3.1 — `Any` as an escape hatch
+Spot the symptom, apply the fix. Examples and nuances for each:
+[references/anti-patterns.md](references/anti-patterns.md).
 
-```python
-# ❌ Disables checking for everything it touches — and it spreads
-def process(data: Any) -> Any:
-    return data.transform()
+| # | Symptom | Fix |
+|---|---|---|
+| 1 | `Any` in a signature | `Protocol`, type parameter `[T]`, or `object` + narrowing |
+| 2 | `dict[str, Any]` carrying a known shape | `dataclass` · `TypedDict` at boundaries · Pydantic for input |
+| 3 | Bare `dict` / `list` | Type parameters, or a named type |
+| 4 | `str` / `int` / `float` for ids, money, emails | `NewType` or value object; `Decimal` for money |
+| 5 | `str` for a closed set of values | `Literal` or `Enum` |
+| 6 | `f(doc, True, False)` | Keyword-only flags, `Enum`, or two functions |
+| 7 | `tuple[str, str, int]` returned | `NamedTuple` or `dataclass` |
+| 8 | `cast(...)`, bare `# type: ignore` | Narrow; fix the type at its source; scoped ignore with code |
+| 9 | `-> User` that can return `None`; `x: T = None` | `-> User \| None`; `x: T \| None = None` |
+| 10 | `-1` / `""` meaning "absent" | `T \| None`, or raise |
+| 11 | `hasattr`, `isinstance(x, SomeProtocol)` as contract | Parameter typed with the `Protocol` |
+| 12 | `ignore_errors = true` globally | `strict = true` + scoped overrides |
+| 13 | Optional fields valid only in some combinations | Union of state types + `match` / `assert_never` |
+| 14 | `is_valid_x(value) -> bool`, then `value: str` travels on | Parse at the boundary into a type that can't be invalid |
+| 15 | `-> A \| list[A] \| None` | One stable return type, or separate functions |
+| 16 | `list[T]` parameter only iterated | `Iterable[T]` / `Sequence[T]` / `Mapping[K, V]` |
+| 17 | `List`, `Optional`, `TypeVar(...)`, `Generic[T]`, quoted forward refs | `list[int]`, `X \| None`, `def f[T]`, `class C[T]`, unquoted names |
+| 18 | Untyped decorator | `def deco[**P, R](func: Callable[P, R]) -> Callable[P, R]` |
 
-# ✅ Describe what you need
-class Transformable(Protocol):
-    def transform(self) -> dict[str, int]: ...
-
-def process(data: Transformable) -> dict[str, int]:
-    return data.transform()
-```
-
-Truly unknown input (parsed JSON): type it `object` and narrow, or validate
-into a model at the boundary.
-
-### 3.2 — `cast` to silence an error
-
-```python
-# ❌ cast is an unchecked assertion: lies to mypy if wrong
-user = cast(User, repo.find(user_id))
-print(user.name)                      # crashes at runtime when None
-
-# ✅ Narrow and handle the case
-user = repo.find(user_id)
-if user is None:
-    raise UserNotFound(user_id)
-print(user.name)
-```
-
-`cast` is acceptable only where mypy cannot know what you provably know
-(e.g. after a library call typed too loosely) — with a comment saying why.
-
-### 3.3 — Hiding `None`
-
-```python
-# ❌ Return type lies: dict.get can return None
-def find(user_id: int) -> User:
-    return users.get(user_id)          # [return-value]
-
-# ❌ Implicit Optional — rejected by mypy (no_implicit_optional)
-def connect(timeout: float = None) -> None: ...
-
-# ✅
-def find(user_id: int) -> User | None:
-    return users.get(user_id)
-
-def connect(timeout: float | None = None) -> None: ...
-```
-
-### 3.4 — Bare generics and loose containers
-
-```python
-# ❌ [type-arg] under strict: dict means dict[Any, Any]
-def load() -> dict: ...
-def tags(items: list) -> list: ...
-
-# ❌ Technically typed, still meaningless
-def load() -> dict[str, Any]: ...
-
-# ✅ Name the shape
-@dataclass(frozen=True)
-class Config:
-    host: str
-    port: int
-
-def load() -> Config: ...
-```
-
-### 3.5 — Over-constrained parameters
-
-```python
-# ❌ Rejects tuples, generators, and list[bool] (list is invariant)
-def total(prices: list[float]) -> float:
-    return sum(prices)
-
-# ✅ Accept the abstract type you actually use
-def total(prices: Iterable[float]) -> float:
-    return sum(prices)
-```
-
-### 3.6 — Primitive obsession
-
-```python
-# ❌ Unreadable, no meaning, `Any` inside
-def process_order(
-    data: dict[str, list[tuple[int, str | None]] | dict[str, Any]],
-) -> dict[str, int | str]: ...
-
-# ✅ Domain types
-ProductId = NewType("ProductId", int)
-
-@dataclass(frozen=True)
-class OrderLine:
-    product_id: ProductId
-    label: str | None
-
-@dataclass(frozen=True)
-class OrderResult:
-    order_id: int
-    status: Status
-
-def process_order(lines: Sequence[OrderLine]) -> OrderResult: ...
-```
-
-### 3.7 — Ignoring errors globally
-
-```toml
-# ❌ mypy runs and checks nothing
-[tool.mypy]
-ignore_errors = true
-ignore_missing_imports = true
-
-# ✅ Strict globally, exceptions scoped and justified
-[tool.mypy]
-strict = true
-
-[[tool.mypy.overrides]]
-module = "migrations.*"        # generated code
-ignore_errors = true
-```
-
-### 3.8 — Legacy `typing` aliases
-
-```python
-# ❌ Deprecated aliases (PEP 585 / 604)
-from typing import Dict, List, Optional, Union
-def f(x: Optional[List[int]]) -> Union[int, str]: ...
-
-# ✅
-def f(x: list[int] | None) -> int | str: ...
-```
-
-Import abstract types from `collections.abc` (`Iterable`, `Callable`,
-`Mapping`), not from `typing`. `ruff` rules `UP006`/`UP007`/`UP035` automate this.
-
-### 3.9 — Runtime checks standing in for types
-
-```python
-# ❌ hasattr / runtime_checkable as a contract check
-if hasattr(obj, "send"):
-    obj.send(...)
-
-@runtime_checkable
-class Notifier(Protocol): ...
-assert isinstance(notifier, Notifier)  # checks method names only, not signatures
-
-# ✅ Type the parameter with the Protocol; mypy checks at every call site
-def welcome(notifier: Notifier) -> None: ...
-```
-
-### 3.10 — Untyped decorators
-
-```python
-# ❌ Erases the decorated function's signature [misc] / [no-untyped-def]
-def retry(func):
-    def wrapper(*args, **kwargs):
-        return func(*args, **kwargs)
-    return wrapper
-
-# ✅ ParamSpec preserves it
-P = ParamSpec("P")
-R = TypeVar("R")
-
-def retry(func: Callable[P, R]) -> Callable[P, R]:   # 3.12+: def retry[**P, R](...)
-    @functools.wraps(func)
-    def wrapper(*args: P.args, **kwargs: P.kwargs) -> R:
-        return func(*args, **kwargs)
-    return wrapper
-```
-
+Rule of thumb: **a type should make wrong code fail mypy** — if a bug type-checks,
+the type says too little (A), lies (B), or allows invalid states (C).
 
 ---
 

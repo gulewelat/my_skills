@@ -9,7 +9,7 @@ description: >
 
 # REST APIs in Python
 
-Conventions: Python 3.11+, FastAPI, Pydantic v2, `uv`, `mypy --strict`, `pytest`, `ruff`.
+Conventions: Python 3.14+, FastAPI, Pydantic v2, `uv`, `mypy --strict`, `pytest`, `ruff`.
 
 ## Reference files
 
@@ -347,15 +347,13 @@ Rules:
 Adding pagination later changes the response shape — a breaking change.
 
 ```python
-from typing import Annotated, Generic, Literal, TypeVar
+from typing import Annotated, Literal
 
 from fastapi import Query
 from pydantic import BaseModel, ConfigDict, Field
 
-T = TypeVar("T")
 
-
-class Page(BaseModel, Generic[T]):
+class Page[T](BaseModel):
     items: list[T]
     next_cursor: str | None          # None = last page
 

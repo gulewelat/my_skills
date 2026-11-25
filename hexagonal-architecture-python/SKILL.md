@@ -11,7 +11,7 @@ Hexagonal Architecture — also called **Ports & Adapters**, near-synonymous wit
 
 > For **event-driven** patterns on top of this foundation — domain events, message bus, commands vs events, CQRS — see the companion skill `domain_events_python_SKILL.md`.
 
-Conventions: `uv` as package manager, `mypy` strict, `pytest`, ports as `typing.Protocol` (structural typing).
+Conventions: Python 3.14+, `uv` as package manager, `mypy` strict, `pytest`, ports as `typing.Protocol` (structural typing).
 
 ---
 

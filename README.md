@@ -15,6 +15,7 @@ un agent pour cadrer la conception, l'écriture et la relecture de code.
 
 ## Conventions communes
 
+- **Python** : 3.14+ — syntaxe moderne (génériques PEP 695, `type`, annotations sans guillemets)
 - **Gestion de paquets** : `uv`
 - **Typage** : `mypy` en mode strict, contrats via `typing.Protocol`
 - **Tests** : `pytest`

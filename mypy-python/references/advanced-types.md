@@ -1,52 +1,49 @@
 # Advanced types
 
-Python 3.11 syntax; 3.12+ alternatives noted inline.
+Python 3.14 syntax: PEP 695 type parameters, `type` aliases, unquoted forward
+references. Every example passes `mypy --strict`.
 
-## Generics and TypeVar
+## Generics
+
+Type parameters are declared in brackets on the function, class or alias that
+uses them — no module-level `TypeVar`.
 
 ```python
 from collections.abc import Sequence
-from typing import Generic, TypeVar
 
-T = TypeVar("T")
-
-def first(items: Sequence[T]) -> T:
+def first[T](items: Sequence[T]) -> T:
     return items[0]
 
 first([1, 2, 3])          # int
 first(["a", "b"])         # str
 ```
 
-**Constrained** vs **bounded** TypeVar:
+**Bounded** vs **constrained**:
 
 ```python
-# Constrained — exactly one of the listed types
-Num = TypeVar("Num", int, float)
-
-def add(a: Num, b: Num) -> Num:
-    return a + b
-
-add(1, 2)        # ✅ int
-add(1.5, 2.5)    # ✅ float
-add("a", "b")    # ❌ str not allowed
-
-# Bounded — any subtype of the bound
 from typing import Protocol
 
 class HasId(Protocol):
     @property
     def id(self) -> int: ...
 
-E = TypeVar("E", bound=HasId)
+# Bounded — any subtype of the bound; the caller's concrete type is preserved
+def by_id[E: HasId](items: Sequence[E]) -> dict[int, E]:
+    return {item.id: item for item in items}
 
-def by_id(items: Sequence[E]) -> dict[int, E]:
-    return {item.id: item for item in items}   # returns the caller's concrete type
+# Constrained — exactly one of the listed types
+def add[N: (int, float)](a: N, b: N) -> N:
+    return a + b
+
+add(1, 2)        # ✅ int
+add(1.5, 2.5)    # ✅ float
+add("a", "b")    # ❌ str not allowed
 ```
 
-**Generic class:**
+**Generic class and alias:**
 
 ```python
-class Stack(Generic[T]):                       # 3.12+: class Stack[T]:
+class Stack[T]:
     def __init__(self) -> None:
         self._items: list[T] = []
 
@@ -56,16 +53,30 @@ class Stack(Generic[T]):                       # 3.12+: class Stack[T]:
     def pop(self) -> T:
         return self._items.pop()
 
-stack: Stack[int] = Stack()
+type Pair[T] = tuple[T, T]
+
+stack = Stack[int]()
 stack.push(42)        # ✅
 stack.push("hello")   # ❌ [arg-type]
 ```
+
+**Defaults** — the parameter can be omitted by users of the type:
+
+```python
+class Response[T = bytes]:
+    def __init__(self, body: T) -> None:
+        self.body = body
+
+def read(response: Response) -> bytes:   # Response means Response[bytes]
+    return response.body
+```
+
+Variance is inferred from usage — no `covariant=True` to declare.
 
 ## Protocol vs ABC
 
 ```python
 from abc import ABC, abstractmethod
-from typing import Protocol
 
 class DrawableABC(ABC):
     @abstractmethod
@@ -102,7 +113,7 @@ not signatures. Don't add it by default.
 Protocol attributes: declare read-only members as `@property` so that
 implementations using a plain attribute or a property both match.
 
-## Callable
+## Callable and ParamSpec
 
 ```python
 from collections.abc import Callable
@@ -110,12 +121,22 @@ from collections.abc import Callable
 def apply_twice(func: Callable[[int], int], value: int) -> int:
     return func(func(value))
 
-Validator = Callable[[str, int], bool]
+type Validator = Callable[[str, int], bool]
 
-R = TypeVar("R")
-
-def map_values(func: Callable[[T], R], values: Sequence[T]) -> list[R]:
+def map_values[T, R](func: Callable[[T], R], values: Sequence[T]) -> list[R]:
     return [func(v) for v in values]
+```
+
+Decorators keep the wrapped signature with a `ParamSpec` (`**P`):
+
+```python
+import functools
+
+def logged[**P, R](func: Callable[P, R]) -> Callable[P, R]:
+    @functools.wraps(func)
+    def wrapper(*args: P.args, **kwargs: P.kwargs) -> R:
+        return func(*args, **kwargs)
+    return wrapper
 ```
 
 When the callable has keyword arguments, defaults, or overloads, use a
@@ -129,14 +150,15 @@ class Fetcher(Protocol):
 ## TypedDict
 
 ```python
-from typing import NotRequired, TypedDict
+from typing import NotRequired, ReadOnly, TypedDict
 
 class UserPayload(TypedDict):
-    id: int
+    id: ReadOnly[int]              # assignment is a type error
     name: str
     email: NotRequired[str]
 
 payload: UserPayload = {"id": 1, "name": "Alice"}       # ✅
+payload["id"] = 2                                       # ❌ read-only key
 bad: UserPayload = {"id": "1", "name": "Bob"}           # ❌ id must be int
 ```
 
@@ -177,7 +199,30 @@ class AuditedQueryBuilder(QueryBuilder): ...
 reveal_type(AuditedQueryBuilder().where("x"))   # AuditedQueryBuilder, not QueryBuilder
 ```
 
-Returning `"QueryBuilder"` instead of `Self` loses the subclass type.
+Returning `QueryBuilder` instead of `Self` loses the subclass type.
+
+## `@override` and `@deprecated`
+
+```python
+from typing import override
+from warnings import deprecated
+
+class Exporter:
+    def export(self) -> bytes: ...
+
+class PdfExporter(Exporter):
+    @override                      # renaming Exporter.export now fails mypy
+    def export(self) -> bytes: ...
+
+@deprecated("Use first() instead")
+def head[T](items: Sequence[T]) -> T:
+    return items[0]
+
+head([1])                          # ❌ [deprecated] — and a DeprecationWarning at runtime
+```
+
+Both are reported only with `enable_error_code = ["explicit-override",
+"deprecated"]` (included in the skill's baseline config).
 
 ## Overloads
 

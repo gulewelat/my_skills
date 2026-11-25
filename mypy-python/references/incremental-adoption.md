@@ -20,7 +20,7 @@ mypy infer more inside.
 
 ```toml
 [tool.mypy]
-python_version = "3.11"
+python_version = "3.14"
 files = ["src"]
 # Global baseline: lenient but not blind
 check_untyped_defs = true

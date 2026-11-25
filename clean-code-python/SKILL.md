@@ -13,7 +13,7 @@ This skill applies the principles from *Clean Code* (Robert C. Martin) to Python
 Its purpose: help Claude review, refactor, and explain code quality decisions with
 precision and educational value.
 
-Conventions: Python 3.11+, `mypy --strict` — every "Good" example below is fully typed.
+Conventions: Python 3.14+, `mypy --strict` — every "Good" example below is fully typed.
 
 ## Reference files
 
@@ -166,7 +166,7 @@ Consistent formatting signals professionalism. Delegate everything mechanical to
 # pyproject.toml
 [tool.ruff]
 line-length = 88
-target-version = "py311"
+target-version = "py314"
 
 [tool.ruff.lint]
 select = [

@@ -5,7 +5,7 @@ description: Write and organize Python tests with pytest. Covers test structure 
 
 # pytest — Testing Framework for Python
 
-Conventions: `uv`, `pytest`, tests type-checked with `mypy --strict`
+Conventions: Python 3.14+, `uv`, `pytest`, tests type-checked with `mypy --strict`
 (test functions annotated `-> None`). Plain functions and native `assert` —
 never `unittest.TestCase`.
 
