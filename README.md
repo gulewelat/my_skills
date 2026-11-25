@@ -9,16 +9,16 @@ un agent pour cadrer la conception, l'écriture et la relecture de code.
 |---|---|
 | [`hexagonal-architecture-python`](hexagonal-architecture-python/SKILL.md) | Architecture hexagonale (Ports & Adapters) : structure de projet, domaine, ports, use cases, adapters, injection, tests |
 | [`clean-code-python`](clean-code-python/SKILL.md) | Principes Clean Code appliqués à Python : nommage, fonctions, classes, qualité des tests |
-| [`mypy-python`](mypy-python/SKILL.md) | Typage statique en mode strict : configuration, annotations, cas difficiles |
-| [`pytest-python`](pytest-python/SKILL.md) | Écriture et organisation des tests : fixtures, paramétrage, structure de suite |
+| [`mypy-python`](mypy-python/SKILL.md) | Typage statique en mode strict : annotations, configuration, discipline des `type: ignore`, anti-patterns ; références : types avancés, adoption progressive, FastAPI |
+| [`pytest-python`](pytest-python/SKILL.md) | Écriture et organisation des tests : structure, markers, paramétrage, fixtures, doublures ; références : fixtures, mocking, CLI et config, anti-patterns |
 
 ## Conventions communes
 
 - **Gestion de paquets** : `uv`
 - **Typage** : `mypy` en mode strict, contrats via `typing.Protocol`
 - **Tests** : `pytest`
-- **Structure** : un dossier par skill, `{nom-du-skill}/SKILL.md` ; le nom du
-  dossier est identique au champ `name` du frontmatter
+- **Structure** : un dossier par skill, `{nom-du-skill}/SKILL.md` (+ éventuel
+  `references/`) ; le nom du dossier est identique au champ `name` du frontmatter
 - **Registre** : anglais, dense et opérationnel — du code de référence et des
   règles de décision, pas d'argumentaire
 
@@ -38,7 +38,8 @@ explicitement par un agent dédié, elles sont **resserrées** : elles décriven
 périmètre plutôt que de ratisser large sur les symptômes.
 
 Le corps vise ~500 lignes maximum : sections courtes, un bloc de code de
-référence par notion, puis des règles en liste. Ce qu'un agent doit retenir,
+référence par notion, puis des règles en liste. Au-delà, le détail part dans
+`references/*.md`, listé en tête du `SKILL.md` et chargé seulement au besoin. Ce qu'un agent doit retenir,
 ce sont les gabarits et les arbitrages — pas les justifications.
 
 ## Installation

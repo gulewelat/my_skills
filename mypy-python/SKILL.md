@@ -1,1015 +1,418 @@
 ---
 name: mypy-python
-description: Static type checking of Python code with mypy in strict mode. Covers basic and advanced annotations (generics, Protocol, TypedDict, overloads), mypy configuration in pyproject.toml, incremental adoption on untyped codebases, FastAPI typing, common patterns and anti-patterns. Use when adding type hints, configuring mypy, or fixing mypy errors.
+description: Static type checking of Python code with mypy in strict mode. Covers annotations (builtins, unions, Literal, NewType, Protocol, Callable), mypy configuration in pyproject.toml, type-ignore discipline, error codes, and typing anti-patterns. Use when adding type hints, configuring mypy, reviewing typed code, or fixing mypy errors.
 ---
 
-# mypy - Static Type Checking for Python
+# mypy — Static Type Checking for Python
 
-## Overview
+Conventions: Python 3.11+, `uv`, `mypy --strict`, contracts via `typing.Protocol`.
+Modern syntax only: builtin generics (`list[int]`) and `X | None` — never
+`typing.List` / `Optional` / `Union`.
 
-mypy is the standard static type checker for Python, enabling gradual typing
-with type hints (PEP 484) and comprehensive type safety. It catches type errors
-before runtime, improves code documentation, and enhances IDE support while
-maintaining Python's dynamic nature through incremental adoption.
+## Reference files
 
-**Key Features**:
-- Gradual typing: Add types incrementally to existing code
-- Strict mode: Maximum type safety with --strict flag
-- Type inference: Automatically infer types from context
-- Protocol support: Structural typing (duck typing with types)
-- Generic types: TypeVar, Generic, and advanced type patterns
-- FastAPI integration: Full Pydantic compatibility
-- Plugin system: Extend type checking for libraries
-- Incremental checking: Fast type checking on large codebases
+Load only when the task needs them:
 
-## Installation
-
-```bash
-# Basic mypy
-uv add --dev mypy
-
-# For FastAPI projects
-uv add --dev mypy pydantic
-
-# Development setup with pre-commit
-uv add --dev mypy pre-commit
-```
+| File | When |
+|---|---|
+| [references/advanced-types.md](references/advanced-types.md) | Generics / TypeVar, Protocol vs ABC in depth, Callable, TypedDict, Final, Self, overloads |
+| [references/incremental-adoption.md](references/incremental-adoption.md) | Introducing mypy on an untyped or partially typed codebase |
+| [references/fastapi.md](references/fastapi.md) | Typing FastAPI endpoints, dependencies, Pydantic models |
 
 ---
 
-## Part 2 — Basic Type Annotations
+## 1 — Annotations
 
-### 2.1 — Variables
+### 1.1 — Variables and functions
 
 ```python
-# Basic types
 name: str = "Alice"
-age: int = 30
-height: float = 5.9
-is_active: bool = True
+count = 10                      # inferred: int — don't annotate the obvious
 
-# Type inference (no need to annotate)
-count = 10        # mypy infers: int
-message = "Hello" # mypy infers: str
+user_id: int | str = 123
+email: str | None = None
 
-# Union — multiple possible types
-from typing import Union
-user_id: Union[int, str] = 123  # int OR str
-
-# Optional — can be None (shorthand for Union[T, None])
-from typing import Optional
-user_email: Optional[str] = None  # str or None
-```
-
-### 2.2 — Functions
-
-```python
-# Basic function typing
 def greet(name: str) -> str:
     return f"Hello, {name}"
 
-# Multiple parameters
-def add(a: int, b: int) -> int:
-    return a + b
-
-# Optional parameter with default value
-def create_user(name: str, age: int = 18) -> dict:
-    return {"name": name, "age": age}
-
-# No return value
-def log_message(message: str) -> None:
+def log_message(message: str) -> None:   # explicit None return, always
     print(message)
 
-# Function that never returns (always raises an exception)
-from typing import NoReturn
-
-def raise_error(message: str) -> NoReturn:
+def fail(message: str) -> NoReturn:      # from typing; always raises
     raise ValueError(message)
 ```
 
-### 2.3 — Collections
-
-```python
-from typing import List, Dict, Set, Tuple
-
-# List
-numbers: List[int] = [1, 2, 3]
-names: List[str] = ["Alice", "Bob"]
-
-# Dict
-user_ages: Dict[str, int] = {"Alice": 30, "Bob": 25}
-
-# Set
-unique_ids: Set[int] = {1, 2, 3}
-
-# Fixed tuple — each position has its own type
-coordinate: Tuple[float, float] = (10.5, 20.3)
-user_record: Tuple[int, str, bool] = (1, "Alice", True)
-
-# Variable-length tuple — homogeneous type
-numbers: Tuple[int, ...] = (1, 2, 3, 4, 5)
-```
-
-**Modern syntax Python 3.9+** — no need to import from `typing`:
+### 1.2 — Collections
 
 ```python
 numbers: list[int] = [1, 2, 3]
-user_ages: dict[str, int] = {"Alice": 30}
-unique_ids: set[int] = {1, 2, 3}
+ages: dict[str, int] = {"Alice": 30}
+ids: set[int] = {1, 2, 3}
+point: tuple[float, float] = (10.5, 20.3)       # fixed length
+values: tuple[int, ...] = (1, 2, 3)             # variable length
+
+items: list[str] = []          # empty literal needs an annotation [var-annotated]
 ```
 
-### 2.4 — Classes
+Parameters take the **narrowest abstract type** that works; return types are
+concrete:
 
 ```python
-from typing import Optional, Dict, Union
+from collections.abc import Iterable, Mapping, Sequence
+
+def total(prices: Iterable[float]) -> float: ...          # any iterable
+def first(items: Sequence[str]) -> str: ...               # indexable, read-only
+def render(headers: Mapping[str, str]) -> list[str]: ...  # read-only mapping
+```
+
+### 1.3 — Classes
+
+```python
+from typing import Self
 
 class User:
-    # Class attributes declared at the top
-    name: str
-    age: int
-    email: Optional[str]
-
-    def __init__(self, name: str, age: int, email: Optional[str] = None) -> None:
+    def __init__(self, name: str, age: int, email: str | None = None) -> None:
         self.name = name
         self.age = age
         self.email = email
 
-    def get_info(self) -> Dict[str, Union[str, int]]:
-        return {
-            "name": self.name,
-            "age": self.age,
-            "email": self.email or "N/A"
-        }
-
-    # Forward reference — class not yet fully defined
     @classmethod
-    def from_dict(cls, data: dict) -> "User":
-        return cls(
-            name=data["name"],
-            age=data["age"],
-            email=data.get("email")
-        )
+    def from_row(cls, row: Mapping[str, str]) -> Self:
+        return cls(name=row["name"], age=int(row["age"]), email=row.get("email"))
 ```
 
----
+Prefer `@dataclass(frozen=True)` for value objects: fields are typed once,
+`__init__` is generated and checked.
 
-## Part 3 — Advanced Type Annotations
-
-### 3.1 — Literal
+### 1.4 — Literal, NewType, aliases
 
 ```python
-from typing import Literal
+from typing import Literal, NewType, TypeAlias
 
-# Restrict to specific values
-def set_log_level(level: Literal["debug", "info", "warning", "error"]) -> None:
-    print(f"Log level: {level}")
-
-# ✅ Valid
-set_log_level("debug")
-
-# ❌ mypy error: "verbose" not in allowed values
-set_log_level("verbose")
-
-# Business alias with Literal
 Status = Literal["pending", "approved", "rejected"]
+UserId = NewType("UserId", int)          # distinct type, zero runtime cost
+Headers: TypeAlias = dict[str, str]      # 3.12+: type Headers = dict[str, str]
 
-def update_status(status: Status) -> None:
-    pass
+def update(user_id: UserId, status: Status) -> None: ...
+
+update(UserId(1), "approved")   # ✅
+update(1, "approved")           # ❌ [arg-type] int is not UserId
+update(UserId(1), "done")       # ❌ [arg-type] not a valid Literal
 ```
 
-### 3.2 — Type Aliases
+| Need | Use |
+|---|---|
+| Closed set of string/int values | `Literal` (or `enum.Enum` if behaviour attached) |
+| Same primitive, different meaning (ids) | `NewType` |
+| Name a long type expression | type alias |
+| Structured data with invariants | `@dataclass(frozen=True)` |
 
-```python
-from typing import Union, Dict, List, NewType
+### 1.5 — Protocol (default for contracts)
 
-# Simple alias — give a business name to a primitive type
-UserId = int
-UserName = str
-
-def get_user(user_id: UserId) -> UserName:
-    return f"User {user_id}"
-
-# Complex alias — name a technical structure
-Headers = Dict[str, str]
-QueryParams = Dict[str, Union[str, int, List[str]]]
-
-def make_request(url: str, headers: Headers, params: QueryParams) -> None:
-    pass
-
-# NewType — creates a truly distinct type, not just an alias
-UserId = NewType("UserId", int)
-ProductId = NewType("ProductId", int)
-
-def get_user(user_id: UserId) -> str:
-    return f"User {user_id}"
-
-user = UserId(123)
-product = ProductId(456)
-
-get_user(user)    # ✅ Valid
-get_user(product) # ❌ mypy error: ProductId not compatible with UserId
-get_user(123)     # ❌ mypy error: raw int not accepted
-```
-
-> **Note — Primitive Obsession**: Type aliases are the main solution against
-> primitive obsession. See Anti-patterns in Part 9.
-
-### 3.3 — Generics and TypeVar
-
-```python
-from typing import TypeVar, Generic, List
-
-# TypeVar — generic type parameter
-T = TypeVar("T")
-
-# Generic function — works with any type
-def first_element(items: List[T]) -> T:
-    return items[0]
-
-# mypy infers type based on what we pass
-num = first_element([1, 2, 3])         # mypy infers: int
-name = first_element(["Alice", "Bob"]) # mypy infers: str
-
-# Bounded TypeVar — restricted to certain types only
-NumericType = TypeVar("NumericType", int, float)
-
-def add_numbers(a: NumericType, b: NumericType) -> NumericType:
-    return a + b
-
-add_numbers(1, 2)      # ✅ int
-add_numbers(1.5, 2.5)  # ✅ float
-add_numbers("a", "b")  # ❌ mypy error: str not allowed
-
-# Generic class
-class Stack(Generic[T]):
-    def __init__(self) -> None:
-        self._items: List[T] = []
-
-    def push(self, item: T) -> None:
-        self._items.append(item)
-
-    def pop(self) -> T:
-        return self._items.pop()
-
-# Usage
-int_stack: Stack[int] = Stack()
-int_stack.push(42)      # ✅ Valid
-int_stack.push("hello") # ❌ mypy error: expected int, got str
-```
-
-### 3.4 — Protocol vs ABC
-
-Both define interfaces, but with different philosophies:
-
-**ABC (Abstract Base Class)**
-```python
-from abc import ABC, abstractmethod
-
-class Drawable(ABC):
-    @abstractmethod
-    def draw(self) -> str:
-        ...
-
-class Circle(Drawable):  # must explicitly inherit
-    def draw(self) -> str:
-        return "Drawing circle"
-```
-
-- Explicit inheritance required
-- Error raised **at runtime** if abstract method is missing
-- Comes from classic OOP
-
-**Protocol**
 ```python
 from typing import Protocol
 
-class Drawable(Protocol):
-    def draw(self) -> str:
-        ...
+class Notifier(Protocol):
+    def send(self, to: str, body: str) -> None: ...
 
-class Circle:  # no need to inherit
-    def draw(self) -> str:
-        return "Drawing circle"
+class SmtpNotifier:                      # no inheritance needed
+    def send(self, to: str, body: str) -> None: ...
 
-class Triangle:
-    def area(self) -> float:
-        return 10.5
+def welcome(notifier: Notifier, to: str) -> None:
+    notifier.send(to, "Welcome!")
 
-def render(obj: Drawable) -> str:
-    return obj.draw()
-
-render(Circle())   # ✅ Valid
-render(Triangle()) # ❌ mypy error: Triangle has no draw()
+welcome(SmtpNotifier(), "a@b.c")         # ✅ checked structurally by mypy
 ```
 
-- **Structural** compatibility — just need the right methods
-- Error detected **by mypy** at static analysis
-- Preferred with mypy — more Pythonic, no inheritance coupling
+Use `ABC` only when you need a runtime error on missing methods or shared
+implementation. Details: [references/advanced-types.md](references/advanced-types.md).
 
-**Runtime checkable Protocol:**
-```python
-from typing import runtime_checkable, Protocol
-
-@runtime_checkable
-class Closeable(Protocol):
-    def close(self) -> None:
-        ...
-
-f = File()
-isinstance(f, Closeable)  # ✅ True — checked at runtime too
-```
-
-| Situation | Use |
-|---|---|
-| You control all classes | ABC or Protocol, either works |
-| You need to type external classes | **Protocol** required |
-| You want a runtime error | **ABC** |
-| You want to stay decoupled | **Protocol** |
-
-### 3.5 — Callable
+### 1.6 — Narrowing
 
 ```python
-from typing import Callable
+def display(user: User | None) -> str:
+    if user is None:
+        return "anonymous"
+    return user.name            # narrowed to User
 
-# Syntax: Callable[[parameter types], return type]
-
-# Function that takes another function as parameter
-def apply_twice(func: Callable[[int], int], value: int) -> int:
-    return func(func(value))
-
-def double(x: int) -> int:
-    return x * 2
-
-apply_twice(double, 5)  # ✅ Returns 20
-apply_twice(str, 5)     # ❌ mypy error: str -> str not compatible with int -> int
-
-# Callable with multiple parameters
-Validator = Callable[[str, int], bool]
-
-def validate_user(name: str, age: int) -> bool:
-    return len(name) > 0 and age >= 0
-
-validator: Validator = validate_user  # ✅ Valid
-
-# Generic Callable with TypeVar
-from typing import TypeVar
-
-T = TypeVar("T")
-R = TypeVar("R")
-
-def map_values(func: Callable[[T], R], values: list[T]) -> list[R]:
-    return [func(v) for v in values]
-
-map_values(double, [1, 2, 3])  # ✅ mypy infers: list[int]
-map_values(str, [1, 2, 3])     # ✅ mypy infers: list[str]
+def size(value: int | str) -> int:
+    if isinstance(value, str):
+        return len(value)
+    return value                # narrowed to int
 ```
+
+Narrow with `is None`, `isinstance`, early return, or `match`. Never with
+`cast` (see anti-patterns).
 
 ---
 
-## Part 4 — mypy Configuration
+## 2 — Configuration
 
-### 4.1 — pyproject.toml
+### 2.1 — pyproject.toml (strict baseline)
 
 ```toml
 [tool.mypy]
 python_version = "3.11"
 files = ["src", "tests"]
-exclude = ["build", "dist", "venv"]
+strict = true
 
-# Strictness
-disallow_untyped_defs = true
-no_implicit_optional = true
-warn_return_any = true
-warn_unused_ignores = true
-warn_redundant_casts = true
-strict_equality = true
+# Not included in --strict, worth enabling
+warn_unreachable = true
+enable_error_code = ["ignore-without-code", "redundant-expr", "truthy-bool"]
 
-# Error reporting
-show_error_codes = true
-show_column_numbers = true
+# Reporting
 pretty = true
-color_output = true
+show_column_numbers = true
 
-# Incremental
-incremental = true
-cache_dir = ".mypy_cache"
-
-# Per-module overrides
+# Third-party packages without stubs — per module, never globally
 [[tool.mypy.overrides]]
-module = "tests.*"
-disallow_untyped_defs = false
-
-[[tool.mypy.overrides]]
-module = ["migrations.*"]
-ignore_errors = true
+module = ["some_untyped_lib.*"]
+ignore_missing_imports = true
 ```
 
-### 4.2 — Strict Mode
+`strict = true` enables, among others: `disallow_untyped_defs`,
+`disallow_any_generics`, `disallow_untyped_calls`, `warn_return_any`,
+`warn_unused_ignores`, `no_implicit_reexport`, `strict_equality`.
 
-```bash
-# Enable strict mode via command line
-uv run mypy --strict src/
+Tests are type-checked too: annotate test functions `-> None` and fixtures
+with their yielded type.
+
+Before ignoring a missing import, look for stubs: `uv add --dev types-requests`
+(or the package's `py.typed`).
+
+### 2.2 — `# type: ignore` discipline
+
+```python
+# ✅ Error code + reason
+value = legacy.load()  # type: ignore[no-untyped-call]  # legacy has no stubs, TICKET-42
+
+# ❌ Bare ignore — hides every future error on that line
+value = legacy.load()  # type: ignore
 ```
 
-```toml
-# pyproject.toml — manual strict equivalent
-[tool.mypy]
-disallow_any_unimported = true
-disallow_any_generics = true
-disallow_subclassing_any = true
-disallow_untyped_calls = true
-disallow_untyped_defs = true
-disallow_incomplete_defs = true
-check_untyped_defs = true
-disallow_untyped_decorators = true
-warn_redundant_casts = true
-warn_unused_ignores = true
-warn_return_any = true
-strict_equality = true
+- Always scope to an error code; `ignore-without-code` makes this mandatory.
+- `warn_unused_ignores` (in strict) flags ignores that are no longer needed.
+- A function needing several ignores needs a typed wrapper instead.
+
+### 2.3 — `reveal_type` for debugging
+
+```python
+reveal_type(result)   # mypy: Revealed type is "builtins.list[app.models.User]"
 ```
 
-**Progressive strict mode adoption:**
-
-```toml
-[tool.mypy]
-# Global still lenient
-disallow_untyped_defs = true
-
-# Strict on new and critical code
-[[tool.mypy.overrides]]
-module = "app.core.*"
-strict = true
-
-# Being migrated
-[[tool.mypy.overrides]]
-module = "app.utils.*"
-disallow_untyped_defs = true
-warn_return_any = true
-
-# Legacy, not yet touched
-[[tool.mypy.overrides]]
-module = "app.legacy.*"
-ignore_errors = true
-```
-
-### 4.3 — Anti-pattern: Ignoring errors globally
-
-```toml
-# ❌ WRONG: disables mypy on the entire project
-[tool.mypy]
-ignore_errors = true
-```
-
-```toml
-# ✅ CORRECT: ignore only what is justified
-[tool.mypy]
-strict = true
-
-[[tool.mypy.overrides]]
-module = "app.legacy.*"
-ignore_errors = true        # Legacy pending migration
-
-[[tool.mypy.overrides]]
-module = "migrations.*"
-ignore_errors = true        # Auto-generated migrations
-```
+Recognised by mypy without import; at runtime it needs
+`from typing import reveal_type` (3.11+). Remove before committing.
 
 ---
 
-## Part 5 — Incremental Adoption
+## 3 — Anti-patterns
 
-### 5.1 — Start with Entry Points
-
-The entry points depend on the project type:
-
-| Project type | Entry point |
-|---|---|
-| Script / CLI | `main.py` |
-| REST API | `app/routers/` |
-| Worker / tasks | `app/tasks/` |
-| Library | Public API — `__init__.py` |
-
-```bash
-# Always start with what is exposed to the outside
-uv run mypy <entry_point>
-
-# Then descend into the implementation
-uv run mypy <next_layer>
-```
-
-### 5.2 — Strict Mode Per Module
-
-```toml
-[tool.mypy]
-# Global still lenient
-disallow_untyped_defs = true
-
-# Strict on new and critical code
-[[tool.mypy.overrides]]
-module = "app.core.*"
-strict = true
-
-# Being migrated
-[[tool.mypy.overrides]]
-module = "app.utils.*"
-disallow_untyped_defs = true
-warn_return_any = true
-
-# Legacy, not yet touched
-[[tool.mypy.overrides]]
-module = "app.legacy.*"
-ignore_errors = true
-```
-
-### 5.3 — Strategic type: ignore
+### 3.1 — `Any` as an escape hatch
 
 ```python
-# ✅ Ignore with error code + reason
-import legacy_module  # type: ignore[import]  # TODO: migrate to typed lib
-
-# ✅ Ignore specific error on a line
-user_id = user_dict["id"]  # type: ignore[index]
-
-# ❌ WRONG: ignore without explanation
-import legacy_module  # type: ignore
-```
-
-### 5.4 — reveal_type
-
-```python
-# reveal_type is a mypy debug tool — no import needed
-def process_user(user_id: int):
-    user = get_user(user_id)
-    reveal_type(user)  # mypy prints: Revealed type is "app.models.User"
-
-    name = user.name
-    reveal_type(name)  # mypy prints: Revealed type is "str"
-
-# Useful for debugging generics
-stack = Stack()
-stack.push(42)
-reveal_type(stack)  # mypy prints: Revealed type is "Stack[int]"
-```
-
-> **Warning**: `reveal_type` is a debug tool only — remove before committing.
-> Available natively since Python 3.11.
-
----
-
-## Part 6 — FastAPI Integration
-
-### 6.1 — Typed Endpoints with Pydantic
-
-```python
-from fastapi import FastAPI, HTTPException
-from pydantic import BaseModel
-from typing import Optional
-
-app = FastAPI()
-
-# Pydantic schemas — runtime validation + static typing
-class User(BaseModel):
-    id: int
-    name: str
-    email: str
-    age: Optional[int] = None
-
-class UserCreate(BaseModel):
-    name: str
-    email: str
-    age: Optional[int] = None
-
-# Typed endpoints
-@app.get("/users/{user_id}")
-def get_user(user_id: int) -> User:
-    if user_id == 0:
-        raise HTTPException(status_code=404, detail="User not found")
-    return User(id=user_id, name=f"User {user_id}", email="user@example.com")
-
-@app.get("/users")
-def list_users(skip: int = 0, limit: int = 10) -> list[User]:
-    return [
-        User(id=i, name=f"User {i}", email=f"user{i}@example.com")
-        for i in range(skip, skip + limit)
-    ]
-
-@app.post("/users")
-def create_user(user: UserCreate) -> User:
-    return User(id=1, name=user.name, email=user.email, age=user.age)
-```
-
-### 6.2 — Async Endpoints
-
-```python
-from typing import Optional
-from fastapi import FastAPI, Depends, HTTPException
-from sqlalchemy.ext.asyncio import AsyncSession
-
-app = FastAPI()
-
-async def get_db() -> AsyncSession:
-    async with AsyncSessionLocal() as session:
-        yield session
-
-@app.get("/users/{user_id}")
-async def get_user(
-    user_id: int,
-    db: AsyncSession = Depends(get_db)
-) -> User:
-    user = await db.get(User, user_id)
-    if user is None:
-        raise HTTPException(status_code=404, detail="User not found")
-    return user
-
-@app.get("/users")
-async def list_users(
-    skip: int = 0,
-    limit: int = 10,
-    db: AsyncSession = Depends(get_db)
-) -> list[User]:
-    result = await db.execute(
-        select(User).offset(skip).limit(limit)
-    )
-    return result.scalars().all()
-```
-
-### 6.3 — Typed Dependency Injection
-
-```python
-from typing import Annotated, Optional
-from fastapi import FastAPI, Depends, Header, HTTPException
-
-app = FastAPI()
-
-async def get_current_user(
-    authorization: Annotated[Optional[str], Header()] = None
-) -> User:
-    if authorization is None:
-        raise HTTPException(status_code=401, detail="Not authenticated")
-    return User(id=1, name="Current User", email="user@example.com")
-
-@app.get("/me")
-async def get_me(
-    current_user: Annotated[User, Depends(get_current_user)]
-) -> User:
-    return current_user
-
-# Typed dependency chain
-class UserService:
-    def __init__(self, db: AsyncSession) -> None:
-        self.db = db
-
-    async def get_user(self, user_id: int) -> Optional[User]:
-        return await self.db.get(User, user_id)
-
-def get_user_service(
-    db: Annotated[AsyncSession, Depends(get_db)]
-) -> UserService:
-    return UserService(db)
-
-@app.get("/users/{user_id}")
-async def get_user(
-    user_id: int,
-    service: Annotated[UserService, Depends(get_user_service)]
-) -> User:
-    user = await service.get_user(user_id)
-    if user is None:
-        raise HTTPException(status_code=404, detail="User not found")
-    return user
-```
-
----
-
-## Part 7 — Common Patterns
-
-### 7.1 — TypedDict
-
-```python
-from typing import TypedDict, Optional
-
-class UserDict(TypedDict):
-    id: int
-    name: str
-    email: str
-    age: Optional[int]
-
-def create_user(data: UserDict) -> UserDict:
-    return {
-        "id": 1,
-        "name": data["name"],
-        "email": data["email"],
-        "age": data.get("age"),
-    }
-
-# ✅ Valid
-user: UserDict = {
-    "id": 1,
-    "name": "Alice",
-    "email": "alice@example.com",
-    "age": 30
-}
-
-# ❌ mypy error: missing required key "email"
-invalid_user: UserDict = {
-    "id": 1,
-    "name": "Bob",
-}
-
-# ❌ mypy error: "id" must be int not str
-invalid_user2: UserDict = {
-    "id": "1",
-    "name": "Bob",
-    "email": "bob@example.com",
-    "age": None
-}
-```
-
-> **TypedDict vs Pydantic**: TypedDict is purely static, no runtime validation.
-> For a REST API, **Pydantic is preferred**. TypedDict is useful for internal
-> structures that don't need runtime validation.
-
-### 7.2 — Final
-
-```python
-from typing import Final
-
-# Constants that should never change
-API_VERSION: Final = "v1"
-MAX_RETRIES: Final[int] = 3
-DEFAULT_TIMEOUT: Final[float] = 30.0
-
-# ❌ mypy error: Cannot assign to final name
-API_VERSION = "v2"
-MAX_RETRIES = 5
-
-# Non-inheritable class
-from typing import final
-
-@final
-class Config:
-    DEBUG: Final[bool] = False
-    DATABASE_URL: Final[str] = "postgresql://localhost/db"
-
-# ❌ mypy error: Cannot inherit from final class
-class AppConfig(Config):
-    pass
-```
-
-### 7.3 — Self
-
-```python
-from typing import Self  # Python 3.11+
-
-class QueryBuilder:
-    def __init__(self) -> None:
-        self._filters: list[str] = []
-        self._limit: int = 100
-
-    def filter(self, condition: str) -> Self:
-        self._filters.append(condition)
-        return self
-
-    def limit(self, value: int) -> Self:
-        self._limit = value
-        return self
-
-    def build(self) -> str:
-        filters = " AND ".join(self._filters)
-        return f"SELECT * FROM table WHERE {filters} LIMIT {self._limit}"
-
-# Typed method chaining
-query = (
-    QueryBuilder()
-    .filter("age > 18")
-    .filter("is_active = true")
-    .limit(50)
-    .build()
-)
-```
-
-**Why `Self` instead of the class name:**
-
-```python
-class Base:
-    def clone(self) -> "Base":  # ❌ Returns Base, not the subclass
-        ...
-
-class Child(Base):
-    pass
-
-child = Child().clone()
-reveal_type(child)  # mypy sees: Base — not Child!
-
-# ✅ With Self
-class Base:
-    def clone(self) -> Self:  # Always returns the real type
-        ...
-
-child = Child().clone()
-reveal_type(child)  # mypy sees: Child ✅
-```
-
----
-
-## Part 8 — Best Practices & Anti-patterns
-
-### 8.1 — Best Practices
-
-**1. Type public APIs first**
-```python
-# ✅ Always type what is exposed
-def get_user(user_id: int) -> Optional[User]:
-    return db.query(User).get(user_id)
-
-# ✅ Acceptable — inference for internal helpers
-def _format_name(first, last):
-    return f"{first} {last}"
-```
-
-**2. Use business aliases**
-```python
-# ✅ Readable, clear business meaning
-UserId = NewType("UserId", int)
-OrderStatus = Literal["pending", "approved", "rejected"]
-
-def get_order(user_id: UserId, status: OrderStatus) -> list[Order]:
-    ...
-
-# ❌ Primitive, no business meaning
-def get_order(user_id: int, status: str) -> list:
-    ...
-```
-
-**3. Document type: ignore**
-```python
-# ✅ Explicit and traceable
-import legacy_module  # type: ignore[import]  # TODO: migrate to typed lib
-
-# ❌ Silent and opaque
-import legacy_module  # type: ignore
-```
-
-**4. Use reveal_type during development**
-```python
-# ✅ mypy debug — remove before committing
-reveal_type(result)  # Revealed type is "list[User]"
-```
-
-### 8.2 — Anti-patterns
-
-**1. Using Any everywhere**
-```python
-# ❌ WRONG: disables all verification
-from typing import Any
-
+# ❌ Disables checking for everything it touches — and it spreads
 def process(data: Any) -> Any:
     return data.transform()
 
-# ✅ CORRECT: Protocol to type without constraining
-from typing import Protocol
-
+# ✅ Describe what you need
 class Transformable(Protocol):
-    def transform(self) -> dict: ...
+    def transform(self) -> dict[str, int]: ...
 
-def process(data: Transformable) -> dict:
+def process(data: Transformable) -> dict[str, int]:
     return data.transform()
 ```
 
-**2. Ignoring type errors globally**
+Truly unknown input (parsed JSON): type it `object` and narrow, or validate
+into a model at the boundary.
+
+### 3.2 — `cast` to silence an error
+
+```python
+# ❌ cast is an unchecked assertion: lies to mypy if wrong
+user = cast(User, repo.find(user_id))
+print(user.name)                      # crashes at runtime when None
+
+# ✅ Narrow and handle the case
+user = repo.find(user_id)
+if user is None:
+    raise UserNotFound(user_id)
+print(user.name)
+```
+
+`cast` is acceptable only where mypy cannot know what you provably know
+(e.g. after a library call typed too loosely) — with a comment saying why.
+
+### 3.3 — Hiding `None`
+
+```python
+# ❌ Return type lies: dict.get can return None
+def find(user_id: int) -> User:
+    return users.get(user_id)          # [return-value]
+
+# ❌ Implicit Optional — rejected by mypy (no_implicit_optional)
+def connect(timeout: float = None) -> None: ...
+
+# ✅
+def find(user_id: int) -> User | None:
+    return users.get(user_id)
+
+def connect(timeout: float | None = None) -> None: ...
+```
+
+### 3.4 — Bare generics and loose containers
+
+```python
+# ❌ [type-arg] under strict: dict means dict[Any, Any]
+def load() -> dict: ...
+def tags(items: list) -> list: ...
+
+# ❌ Technically typed, still meaningless
+def load() -> dict[str, Any]: ...
+
+# ✅ Name the shape
+@dataclass(frozen=True)
+class Config:
+    host: str
+    port: int
+
+def load() -> Config: ...
+```
+
+### 3.5 — Over-constrained parameters
+
+```python
+# ❌ Rejects tuples, generators, and list[bool] (list is invariant)
+def total(prices: list[float]) -> float:
+    return sum(prices)
+
+# ✅ Accept the abstract type you actually use
+def total(prices: Iterable[float]) -> float:
+    return sum(prices)
+```
+
+### 3.6 — Primitive obsession
+
+```python
+# ❌ Unreadable, no meaning, `Any` inside
+def process_order(
+    data: dict[str, list[tuple[int, str | None]] | dict[str, Any]],
+) -> dict[str, int | str]: ...
+
+# ✅ Domain types
+ProductId = NewType("ProductId", int)
+
+@dataclass(frozen=True)
+class OrderLine:
+    product_id: ProductId
+    label: str | None
+
+@dataclass(frozen=True)
+class OrderResult:
+    order_id: int
+    status: Status
+
+def process_order(lines: Sequence[OrderLine]) -> OrderResult: ...
+```
+
+### 3.7 — Ignoring errors globally
+
 ```toml
-# ❌ WRONG
+# ❌ mypy runs and checks nothing
 [tool.mypy]
 ignore_errors = true
+ignore_missing_imports = true
 
-# ✅ CORRECT
+# ✅ Strict globally, exceptions scoped and justified
 [tool.mypy]
 strict = true
 
 [[tool.mypy.overrides]]
-module = "app.legacy.*"
-ignore_errors = true  # Legacy pending migration
+module = "migrations.*"        # generated code
+ignore_errors = true
 ```
 
-**3. Not using Optional**
+### 3.8 — Legacy `typing` aliases
+
 ```python
-# ❌ WRONG: can crash at runtime
-def get_user(user_id: int) -> User:
-    return db.get(user_id)  # Can return None!
+# ❌ Deprecated aliases (PEP 585 / 604)
+from typing import Dict, List, Optional, Union
+def f(x: Optional[List[int]]) -> Union[int, str]: ...
 
-# ✅ CORRECT: explicit and handled None
-def get_user(user_id: int) -> Optional[User]:
-    return db.get(user_id)
-
-user = get_user(123)
-if user is not None:
-    print(user.name)
+# ✅
+def f(x: list[int] | None) -> int | str: ...
 ```
 
-**4. Primitive Obsession**
+Import abstract types from `collections.abc` (`Iterable`, `Callable`,
+`Mapping`), not from `typing`. `ruff` rules `UP006`/`UP007`/`UP035` automate this.
+
+### 3.9 — Runtime checks standing in for types
+
 ```python
-# ❌ WRONG: nested primitives, unreadable, no business meaning
-def process_order(
-    data: Dict[str, Union[List[Tuple[int, Optional[str]]], Dict[str, Any]]]
-) -> Dict[str, Union[int, str]]:
-    ...
+# ❌ hasattr / runtime_checkable as a contract check
+if hasattr(obj, "send"):
+    obj.send(...)
 
-# ✅ CORRECT: explicit business aliases
-from typing import NewType
+@runtime_checkable
+class Notifier(Protocol): ...
+assert isinstance(notifier, Notifier)  # checks method names only, not signatures
 
-ProductId = NewType("ProductId", int)
-ProductName = Optional[str]
-OrderLine = Tuple[ProductId, ProductName]
-OrderData = Dict[str, Union[List[OrderLine], Dict[str, Any]]]
-OrderResult = Dict[str, Union[int, str]]
-
-def process_order(data: OrderData) -> OrderResult:
-    ...
+# ✅ Type the parameter with the Protocol; mypy checks at every call site
+def welcome(notifier: Notifier) -> None: ...
 ```
+
+### 3.10 — Untyped decorators
+
+```python
+# ❌ Erases the decorated function's signature [misc] / [no-untyped-def]
+def retry(func):
+    def wrapper(*args, **kwargs):
+        return func(*args, **kwargs)
+    return wrapper
+
+# ✅ ParamSpec preserves it
+P = ParamSpec("P")
+R = TypeVar("R")
+
+def retry(func: Callable[P, R]) -> Callable[P, R]:   # 3.12+: def retry[**P, R](...)
+    @functools.wraps(func)
+    def wrapper(*args: P.args, **kwargs: P.kwargs) -> R:
+        return func(*args, **kwargs)
+    return wrapper
+```
+
 
 ---
 
-## Part 9 — Quick Reference
+## 4 — Quick Reference
 
-### 9.1 — uv Commands
+### 4.1 — Commands
 
 ```bash
-# Installation
-uv add --dev mypy
-
-# Run mypy
-uv run mypy src/
-
-# Strict mode
-uv run mypy --strict src/
-
-# Check a single file
-uv run mypy app/main.py
-
-# Show error codes
-uv run mypy --show-error-codes src/
-
-# Incremental mode (faster)
-uv run mypy --incremental src/
-
-# Generate HTML report
-uv run mypy src/ --html-report mypy-report
-
-# Verbose output
-uv run mypy --verbose src/
+uv run mypy                       # uses `files` from pyproject.toml
+uv run mypy src/app/main.py       # single file
+uv run mypy --strict src/         # strict without config
+uv run mypy --html-report mypy-report src/   # needs lxml
 ```
 
-### 9.2 — Error Code Reference
+### 4.2 — Frequent error codes
 
-```python
-# [attr-defined] — attribute does not exist
-user.non_existent_field
+| Code | Meaning | Usual fix |
+|---|---|---|
+| `[arg-type]` | Wrong argument type | Fix the caller or widen the parameter |
+| `[return-value]` | Wrong return type | Often a missing `| None` |
+| `[assignment]` | Incompatible assignment | Annotate the variable's real type |
+| `[union-attr]` | Attribute on a possibly-`None` value | Narrow first |
+| `[attr-defined]` | Attribute doesn't exist | Typo, or missing Protocol member |
+| `[type-arg]` | Bare generic (`dict`, `list`) | Add parameters |
+| `[no-untyped-def]` | Function missing annotations | Annotate params and return |
+| `[no-untyped-call]` | Calling an untyped function from typed code | Type the callee or wrap it |
+| `[var-annotated]` | Empty container needs a type | `x: list[int] = []` |
+| `[import-untyped]` | Package has no stubs | Install `types-*`, else scoped override |
+| `[import-not-found]` | Module not found | Check environment / path |
+| `[unused-ignore]` | Ignore no longer needed | Remove it |
 
-# [arg-type] — wrong argument type
-def greet(name: str) -> str: ...
-greet(123)
+## Related skills
 
-# [return-value] — wrong return type
-def get_id() -> int:
-    return "123"
-
-# [assignment] — wrong type on assignment
-age: int = "thirty"
-
-# [index] — invalid index
-user_dict: Dict[str, int] = {}
-user_dict[42]
-
-# [operator] — unsupported operator
-"hello" + 5
-
-# [import] — import without stubs or not found
-import unknown_lib
-
-# [no-untyped-def] — function without annotations
-def process(data):
-    return data
-
-# [var-annotated] — variable without inferable annotation
-x = []        # ❌
-x: list[int] = []  # ✅
-
-# [misc] — miscellaneous error
-# Often appears with untyped decorators
-```
-
----
-
-## Resources
-
-- **Official documentation**: https://mypy.readthedocs.io/
-- **PEP 484 — Type Hints**: https://peps.python.org/pep-0484/
-- **typing module**: https://docs.python.org/3/library/typing.html
-- **mypy GitHub**: https://github.com/python/mypy
-- **FastAPI + mypy**: https://fastapi.tiangolo.com/tutorial/type-hints/
-
-## Related Skills
-
-- **pytest**: type-safe testing with mypy
-- **fastapi**: endpoints with Pydantic runtime validation + mypy
-- **ruff**: Python linter — works well in tandem with mypy
-- **uv**: package manager — used throughout this skill
+- **pytest-python**: tests are type-checked with the same config
+- **hexagonal-architecture-python**: ports as `Protocol`, mypy as conformance check
+- **clean-code-python**: naming and function design behind good types
