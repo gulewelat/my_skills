@@ -51,12 +51,45 @@ ce sont les gabarits et les arbitrages — pas les justifications.
 
 ## Installation
 
-Copier (ou lier) les dossiers dans le répertoire de skills de Claude Code :
+Lier chaque dossier dans les skills personnels de Claude Code : un `git pull`
+suffit ensuite à mettre à jour.
 
 ```bash
-cp -r */ ~/.claude/skills/        # skills personnels
-# ou, par projet : .claude/skills/
+cd ~/Projets/my_skills
+for d in */; do
+  [ -f "$d/SKILL.md" ] && ln -sfn "$PWD/${d%/}" ~/.claude/skills/"${d%/}"
+done
 ```
+
+Ces skills complètent le plugin de Matt Pocock (`skills-for-real-engineers`),
+qui fournit le flux grilling → `/to-spec` → `/to-tickets` → `/implement`.
+
+## Utilisation dans un projet
+
+Les skills se déclenchent sur leur description, mais rien ne garantit qu'ils
+soient tous chargés au bon moment. Dans chaque projet :
+
+1. `/setup-matt-pocock-skills` une fois (tracker, `CLAUDE.md`, `docs/agents/`).
+2. Ajouter ce bloc au `CLAUDE.md` du projet, toujours en contexte :
+
+   ```markdown
+   ## Coding standards
+
+   Python 3.14+, uv, mypy --strict, pytest, ruff. Apply these skills whenever they fit:
+   - Python code: clean-code-python, mypy-python
+   - Tests: pytest-python (with /tdd for the red-green loop)
+   - Domain vs infrastructure: hexagonal-architecture-python
+   - HTTP endpoints: rest-api-python
+   - Data pipelines and jobs: python-data-engineering
+   - Git: ticket-branching before /implement, atomic-commits to commit,
+     pull-requests to open a PR
+   ```
+
+3. Faire respecter le mécanique par les outils : `ruff`, `mypy` et `pytest`
+   en pre-commit et en CI.
+
+`/code-review` lit les standards documentés dans le dépôt : lui indiquer
+`CLAUDE.md` comme source, ou copier le bloc dans un `CODING_STANDARDS.md`.
 
 ## Méthode de construction
 
