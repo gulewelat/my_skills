@@ -93,7 +93,7 @@ from dataclasses import dataclass, field
 from uuid import UUID, uuid4
 
 from .value_objects import Email
-from .exceptions import AccountAlreadyActive
+from .exceptions import AccountAlreadyActiveError
 
 
 @dataclass
@@ -104,7 +104,7 @@ class User:
 
     def activate(self) -> None:
         if self.is_active:
-            raise AccountAlreadyActive(self.id)
+            raise AccountAlreadyActiveError(self.id)
         self.is_active = True
 
     def __eq__(self, other: object) -> bool:
@@ -147,13 +147,13 @@ class DomainError(Exception):
     """Base class for all domain errors."""
 
 
-class AccountAlreadyActive(DomainError):
+class AccountAlreadyActiveError(DomainError):
     def __init__(self, user_id: UUID) -> None:
         super().__init__(f"Account {user_id} is already active")
         self.user_id = user_id
 
 
-class UserNotFound(DomainError):
+class UserNotFoundError(DomainError):
     def __init__(self, user_id: UUID) -> None:
         super().__init__(f"User {user_id} not found")
         self.user_id = user_id
@@ -214,7 +214,7 @@ A use case is one application action. It **orchestrates**: fetch through ports, 
 from uuid import UUID
 
 from <package>.domain.entities import User
-from <package>.domain.exceptions import UserNotFound
+from <package>.domain.exceptions import UserNotFoundError
 from <package>.ports.outbound import Notifier, UserRepository
 
 
@@ -226,7 +226,7 @@ class ActivateUser:
     def execute(self, user_id: UUID) -> User:
         user = self._users.get(user_id)
         if user is None:
-            raise UserNotFound(user_id)
+            raise UserNotFoundError(user_id)
         user.activate()          # business rule enforced by the entity
         self._users.save(user)
         self._notifier.send(user, "Your account is now active")
@@ -239,7 +239,7 @@ Ports arrive by **constructor injection**, typed as the `Protocol`s — `mypy` a
 
 - Imports: `domain/` and `ports/` only. No adapters, no framework, no infrastructure.
 - Inputs are primitives or value objects; outputs are domain objects. Transport models (request/response schemas, ORM rows) never cross this boundary — the driving adapter translates on the way in and on the way out.
-- Absence and failure become explicit domain errors (`UserNotFound`), raised for adapters to translate — a use case never returns framework responses or status codes.
+- Absence and failure become explicit domain errors (`UserNotFoundError`), raised for adapters to translate — a use case never returns framework responses or status codes.
 - One use case = one action, named as a verb phrase. If it grows branches to serve different callers, split it.
 - The use case is the transaction boundary. If transactional grouping is needed, model it as an outbound port (a unit of work) — never import a DB session here.
 
@@ -293,13 +293,14 @@ Thin translators: parse transport input, call **one** use case, translate the re
 
 ```python
 # adapters/inbound/api.py
+from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, Request, status
 from pydantic import BaseModel
 
 from <package>.application.use_cases import ActivateUser
-from <package>.domain.exceptions import DomainError, UserNotFound
+from <package>.bootstrap import App
 
 router = APIRouter()
 
@@ -310,17 +311,23 @@ class UserResponse(BaseModel):
     is_active: bool
 
 
-@router.post("/users/{user_id}/activate", response_model=UserResponse)
-def activate(user_id: UUID) -> UserResponse:
-    use_case: ActivateUser = ...  # injected — see Dependency injection
-    try:
-        user = use_case.execute(user_id)
-    except UserNotFound:
-        raise HTTPException(status_code=404)
-    except DomainError as exc:
-        raise HTTPException(status_code=409, detail=str(exc))
+def get_activate_user(request: Request) -> ActivateUser:
+    container: App = request.app.state.container   # see Dependency injection
+    return container.activate_user
+
+
+ActivateUserDep = Annotated[ActivateUser, Depends(get_activate_user)]
+
+
+@router.post("/users/{user_id}/activation", status_code=status.HTTP_201_CREATED)
+def activate_user(user_id: UUID, activate: ActivateUserDep) -> UserResponse:
+    user = activate.execute(user_id)
     return UserResponse(id=user.id, email=user.email.value, is_active=user.is_active)
 ```
+
+No `try/except` in the route: domain errors are translated **in one place** by
+exception handlers (`UserNotFoundError` → 404, `AccountAlreadyActiveError` → 409).
+HTTP conventions — naming, status codes, error format — follow **rest-api-python**.
 
 `UserResponse` (the transport schema) and `User` (the domain entity) are different objects on purpose — the API contract and the domain model evolve independently; the route maps one to the other.
 
@@ -328,7 +335,7 @@ def activate(user_id: UUID) -> UserResponse:
 
 - One adapter per port implementation, named by technology (`InMemoryUserRepository`, `SqlUserRepository`).
 - Driving adapters contain zero business logic and never bypass the use case to reach a repository directly.
-- Error translation happens here and only here: the domain raises `DomainError`s, each driving adapter decides what they become (404/409, CLI exit code…).
+- Error translation happens here and only here: the domain raises `DomainError`s, each driving adapter decides what they become (404/409, CLI exit code…) — in one place per adapter, not in every route.
 - A CLI is just another driving adapter — argparse/typer parses in, exit codes translate errors out. Several driving adapters coexist, all wired by the same `bootstrap()`.
 - Framework and driver imports (`fastapi`, `sqlalchemy`, `httpx`…) appear in `adapters/` and nowhere else.
 
@@ -370,33 +377,30 @@ Annotating with the port matters: without it, `mypy` infers the first branch's c
 
 This is also where `mypy` verifies the whole architecture: passing `users` to `ActivateUser(users=...)` is the injection site where each adapter's structural conformance to its port is checked.
 
-Filling the placeholder from the FastAPI adapter:
+The FastAPI side — `create_app` stores the container where route dependencies read it:
 
 ```python
 # main.py
 from fastapi import FastAPI
+
 from <package>.adapters.inbound import api
-from <package>.bootstrap import bootstrap
+from <package>.adapters.inbound.errors import install_error_handlers
+from <package>.bootstrap import App, bootstrap
 from <package>.config import Settings
 
-container = bootstrap(Settings())
-app = FastAPI()
-app.include_router(api.router)
 
-# adapters/inbound/api.py — the route receives the use case via Depends
-from fastapi import Depends
-from <package> import main
+def create_app(container: App) -> FastAPI:
+    app = FastAPI()
+    app.state.container = container      # read by get_activate_user & co.
+    install_error_handlers(app)          # domain errors → HTTP, one mapping
+    app.include_router(api.router)
+    return app
 
-def get_activate_user() -> ActivateUser:
-    return main.container.activate_user
 
-@router.post("/users/{user_id}/activate", response_model=UserResponse)
-def activate(
-    user_id: UUID,
-    use_case: ActivateUser = Depends(get_activate_user),
-) -> UserResponse:
-    ...
+app = create_app(bootstrap(Settings()))
 ```
+
+Routes never import `main` (circular import). Tests call `create_app` with fakes.
 
 ### Rules
 
@@ -419,7 +423,7 @@ import pytest
 from <package>.adapters.outbound.memory import InMemoryUserRepository
 from <package>.application.use_cases import ActivateUser
 from <package>.domain.entities import User
-from <package>.domain.exceptions import UserNotFound
+from <package>.domain.exceptions import UserNotFoundError
 from <package>.domain.value_objects import Email
 
 
@@ -444,7 +448,7 @@ def test_activates_and_notifies() -> None:
 
 def test_unknown_user_raises() -> None:
     use_case = ActivateUser(InMemoryUserRepository(), FakeNotifier())
-    with pytest.raises(UserNotFound):
+    with pytest.raises(UserNotFoundError):
         use_case.execute(uuid4())
 ```
 
@@ -483,7 +487,7 @@ def test_round_trip(session: Session) -> None:  # real DB via fixture
 - Domain vocabulary stays technology-free — a domain attribute is `key`, not `s3_key`; the adapter knows it maps to S3.
 - One composition root; constructor injection everywhere.
 - An in-memory adapter for every port, reused as the test fake, covered by the shared contract tests.
-- Domain errors translated at each driving adapter, and nowhere else.
+- Domain errors translated at each driving adapter, in one place per adapter, and nowhere else.
 
 ❌ Avoid — each has a name; naming it in review is half the fix:
 
